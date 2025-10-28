@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Slack Day-Planner Watcher",
+  "version": "1.0",
+  "description": "Waarschuwt zodra Day-Planner-Sender iets post in het Picnic kanaal en opent het kanaal.",
+  "permissions": [
+    "notifications",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://app.slack.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://app.slack.com/client/*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "48": "icon48.png"
+  }
+}
