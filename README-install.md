@@ -1,3 +1,5 @@
+WARN: DEPRECATED
+
 Installatie (Chrome/Edge):
 1. Ga naar chrome://extensions/
 2. Zet 'Developer mode' aan.
