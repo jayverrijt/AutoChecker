@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/browser": "^8.0.5",
     "@capacitor/core": "^8.5.3",
     "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",

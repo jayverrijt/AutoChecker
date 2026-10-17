@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Browser } from '@capacitor/browser';
 import { 
   Key, 
   Hash, 
@@ -15,7 +16,12 @@ import {
   Copy,
   Check,
   HelpCircle,
-  Play
+  Play,
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
+  User,
+  LogIn
 } from 'lucide-react';
 import { SlackEmoji } from './SlackEmoji';
 import { sounds } from '../utils/audio';
@@ -50,7 +56,17 @@ export const SettingsView = ({
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [showHelper, setShowHelper] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState(false);
+
+  const handleOpenSlackLogin = async () => {
+    const url = formData.workspaceUrl || 'https://picnic.enterprise.slack.com';
+    try {
+      await Browser.open({ url });
+    } catch (e) {
+      window.open(url, '_blank');
+    }
+  };
 
   useEffect(() => {
     if (settings) {
@@ -283,138 +299,81 @@ export const SettingsView = ({
 
       {/* Main Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Connection Credentials */}
-        <div className="bg-[#1a1b20] border border-[#272832] rounded-2xl p-4 space-y-3.5">
-          <div className="flex items-center gap-2">
-            <Key className="w-4 h-4 text-blue-400" />
-            <h3 className="text-sm font-bold text-white">Picnic Sessie &amp; Token</h3>
+        {/* In-App Slack Account & One-Click Login Card */}
+        <div className="bg-[#1a1b20] border border-[#272832] rounded-2xl p-4 space-y-3.5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <LogIn className="w-4 h-4 text-blue-400" />
+              <h3 className="text-sm font-bold text-white">Picnic Slack Account</h3>
+            </div>
+            {botStatus?.authInfo?.user ? (
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[11px] font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                Sessie Actief
+              </span>
+            ) : (
+              <span className="text-[11px] text-neutral-400 font-medium">Niet verbonden</span>
+            )}
           </div>
 
-          {/* Quick cURL importer */}
-          <div className="bg-[#141519] border border-[#2b2d39] rounded-xl p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                <span>Snelle Import via Network Tab</span>
-                <span className="text-[10px] bg-emerald-600/30 text-emerald-300 font-semibold px-1.5 py-0.5 rounded">1-Click</span>
-              </span>
-            </div>
-            <p className="text-[11px] text-neutral-400 leading-relaxed">
-              Klik in DevTools ➜ <strong>Network</strong> met rechtermuisknop op <code>conversations.history</code> ➜ <strong>Copy as cURL</strong> en plak het hier:
-            </p>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={curlInput}
-                onChange={(e) => {
-                  setCurlInput(e.target.value);
-                  handleParseCurl(e.target.value);
-                }}
-                placeholder="Plak hier gekopieerde cURL..."
-                className="w-full bg-[#1e2027] border border-[#353847] rounded-lg px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
-              />
+          {botStatus?.authInfo?.user ? (
+            <div className="bg-[#20222a] border border-[#2c2f3b] rounded-xl p-3 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold text-sm">
+                  <User className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-white">{botStatus.authInfo.user}</div>
+                  <div className="text-[11px] text-neutral-400">{botStatus.authInfo.team || 'Picnic'} • #{formData.channelName}</div>
+                </div>
+              </div>
+
               <button
                 type="button"
-                onClick={() => handleParseCurl(curlInput)}
-                className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold shrink-0 transition-colors shadow"
+                onClick={handleOpenSlackLogin}
+                className="py-1.5 px-2.5 bg-[#2a2d38] hover:bg-[#343846] text-neutral-300 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                title="Heropen inloggen in Slack"
               >
-                Importeer
+                <span>Vernieuw</span>
+                <ExternalLink className="w-3 h-3" />
               </button>
             </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-neutral-400 block mb-1">
-              Workspace URL
-            </label>
-            <div className="flex items-center gap-1.5 bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white">
-              <Globe className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-              <input
-                type="text"
-                value={formData.workspaceUrl}
-                onChange={(e) => handleChange('workspaceUrl', e.target.value)}
-                placeholder="https://picnic.enterprise.slack.com"
-                className="bg-transparent outline-none w-full font-mono text-xs"
-              />
+          ) : (
+            <div className="space-y-3">
+              <p className="text-xs text-neutral-300 leading-relaxed">
+                Log direct in met je Picnic account via de mobiele browser om je sessie automatisch te koppelen:
+              </p>
+              <button
+                type="button"
+                onClick={handleOpenSlackLogin}
+                className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 active:scale-[0.99] text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition-all"
+              >
+                <LogIn className="w-4 h-4" />
+                <span>Inloggen bij Picnic Slack</span>
+                <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+              </button>
             </div>
-          </div>
+          )}
 
-          <div>
-            <label className="text-xs text-neutral-400 block mb-1">
-              User Token (<code className="text-blue-300 font-mono">xoxc-...</code> of <code className="text-blue-300 font-mono">xoxp-...</code>)
-            </label>
-            <input
-              type="password"
-              value={formData.slackToken || ''}
-              onChange={(e) => handleChange('slackToken', e.target.value)}
-              placeholder="xoxc-..."
-              className="w-full bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs text-neutral-400 block mb-1">
-              Session Cookie <code className="text-blue-300 font-mono">d</code> (<code className="text-blue-300 font-mono">xoxd-...</code>)
-            </label>
-            <input
-              type="password"
-              value={formData.slackCookie || ''}
-              onChange={(e) => handleChange('slackCookie', e.target.value)}
-              placeholder="xoxd-..."
-              className="w-full bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
-            />
-            <p className="text-[10px] text-neutral-500 mt-1">
-              Vereist voor Enterprise Grid zodat Slack jouw eigen persoonlijke reactie plaatst.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 pt-1">
-            <div>
-              <label className="text-xs text-neutral-400 block mb-1">Kanaalnaam of Link</label>
-              <div className="flex items-center gap-1.5 bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white">
-                <Hash className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                <input
-                  type="text"
-                  value={formData.channelName}
-                  onChange={(e) => handleChange('channelName', e.target.value)}
-                  className="bg-transparent outline-none w-full font-mono text-xs"
-                  placeholder="#nl-dist-runners-hlm"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs text-neutral-400 block mb-1">Kanaal ID (Optioneel)</label>
-              <input
-                type="text"
-                value={formData.channelId || ''}
-                onChange={(e) => handleChange('channelId', e.target.value)}
-                className="w-full bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
-                placeholder="C0123456789"
-              />
-            </div>
-          </div>
-
-          {/* Test connection button */}
-          <div className="pt-2">
-            <button
-              type="button"
-              onClick={handleTestConnection}
-              disabled={isTesting}
-              className="w-full py-2.5 px-3 bg-[#272a35] hover:bg-[#303442] active:scale-[0.99] border border-[#3b3f52] rounded-xl text-xs font-bold text-white flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-            >
-              {isTesting ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Slack Verbinding Testen...</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
-                  <span>Test Echte Slack Verbinding</span>
-                </>
-              )}
-            </button>
-          </div>
+          {/* Test real connection button */}
+          <button
+            type="button"
+            onClick={handleTestConnection}
+            disabled={isTesting}
+            className="w-full py-2.5 px-3 bg-[#272a35] hover:bg-[#303442] active:scale-[0.99] border border-[#3b3f52] rounded-xl text-xs font-bold text-white flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+          >
+            {isTesting ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Slack Verbinding Testen...</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
+                <span>Controleer Verbinding &amp; Status</span>
+              </>
+            )}
+          </button>
 
           {/* Test results banner */}
           {testResult && (
@@ -451,6 +410,133 @@ export const SettingsView = ({
                   </div>
                 </>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* Collapsible Advanced / Manual Tokens Section */}
+        <div className="bg-[#1a1b20] border border-[#272832] rounded-2xl overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="w-full p-4 flex items-center justify-between text-left hover:bg-[#202128] transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Key className="w-4 h-4 text-neutral-400" />
+              <div>
+                <h4 className="text-xs font-bold text-white">Geavanceerd: Handmatige Tokens</h4>
+                <p className="text-[10px] text-neutral-400">Tokens, cookie en kanaal handmatig aanpassen</p>
+              </div>
+            </div>
+            {showAdvanced ? (
+              <ChevronUp className="w-4 h-4 text-neutral-400" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-neutral-400" />
+            )}
+          </button>
+
+          {showAdvanced && (
+            <div className="p-4 pt-0 space-y-3.5 border-t border-[#262832] mt-2">
+              {/* Quick cURL importer */}
+              <div className="bg-[#141519] border border-[#2b2d39] rounded-xl p-3 space-y-2 mt-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span>Snelle Import via cURL</span>
+                    <span className="text-[10px] bg-emerald-600/30 text-emerald-300 font-semibold px-1.5 py-0.5 rounded">1-Click</span>
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400 leading-relaxed">
+                  Plak hier een gekopieerd verzoek uit het Network tabblad:
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={curlInput}
+                    onChange={(e) => {
+                      setCurlInput(e.target.value);
+                      handleParseCurl(e.target.value);
+                    }}
+                    placeholder="Plak hier gekopieerde cURL..."
+                    className="w-full bg-[#1e2027] border border-[#353847] rounded-lg px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleParseCurl(curlInput)}
+                    className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold shrink-0 transition-colors shadow"
+                  >
+                    Importeer
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-neutral-400 block mb-1">
+                  Workspace URL
+                </label>
+                <div className="flex items-center gap-1.5 bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white">
+                  <Globe className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                  <input
+                    type="text"
+                    value={formData.workspaceUrl}
+                    onChange={(e) => handleChange('workspaceUrl', e.target.value)}
+                    placeholder="https://picnic.enterprise.slack.com"
+                    className="bg-transparent outline-none w-full font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-neutral-400 block mb-1">
+                  User Token (<code className="text-blue-300 font-mono">xoxc-...</code>)
+                </label>
+                <input
+                  type="password"
+                  value={formData.slackToken || ''}
+                  onChange={(e) => handleChange('slackToken', e.target.value)}
+                  placeholder="xoxc-..."
+                  className="w-full bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-neutral-400 block mb-1">
+                  Session Cookie <code className="text-blue-300 font-mono">d</code> (<code className="text-blue-300 font-mono">xoxd-...</code>)
+                </label>
+                <input
+                  type="password"
+                  value={formData.slackCookie || ''}
+                  onChange={(e) => handleChange('slackCookie', e.target.value)}
+                  placeholder="xoxd-..."
+                  className="w-full bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="text-xs text-neutral-400 block mb-1">Kanaalnaam of Link</label>
+                  <div className="flex items-center gap-1.5 bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white">
+                    <Hash className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                    <input
+                      type="text"
+                      value={formData.channelName}
+                      onChange={(e) => handleChange('channelName', e.target.value)}
+                      className="bg-transparent outline-none w-full font-mono text-xs"
+                      placeholder="#nl-dist-runners-hlm"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-neutral-400 block mb-1">Kanaal ID (Optioneel)</label>
+                  <input
+                    type="text"
+                    value={formData.channelId || ''}
+                    onChange={(e) => handleChange('channelId', e.target.value)}
+                    className="w-full bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
+                    placeholder="C0123456789"
+                  />
+                </div>
+              </div>
             </div>
           )}
         </div>
