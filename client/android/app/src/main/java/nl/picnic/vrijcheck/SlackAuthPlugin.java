@@ -15,6 +15,7 @@ import android.view.Window;
 import android.webkit.CookieManager;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -36,14 +37,16 @@ import java.util.regex.Pattern;
 @CapacitorPlugin(name = "SlackAuth")
 public class SlackAuthPlugin extends Plugin {
 
+    // Modern Chrome desktop user agent (Chrome 142) so Slack accepts it without "browser not supported" warning
     private static final String DESKTOP_USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 
     private Dialog loginDialog;
     private WebView webView;
     private Handler pollHandler;
     private Runnable pollRunnable;
     private boolean isResolved = false;
+    private boolean hasRedirectedToApp = false;
 
     @PluginMethod
     public void login(PluginCall call) {
@@ -61,6 +64,7 @@ public class SlackAuthPlugin extends Plugin {
     private void showLoginDialog(String startUrl, PluginCall call) {
         Context context = getActivity();
         isResolved = false;
+        hasRedirectedToApp = false;
 
         loginDialog = new Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         loginDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -154,8 +158,10 @@ public class SlackAuthPlugin extends Plugin {
         settings.setDisplayZoomControls(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(true);
+        settings.setSupportMultipleWindows(false); // keep in same webview
 
-        // Spoof Desktop User Agent so Slack doesn't show "Get the Slack app"
+        // Spoof modern Chrome desktop User-Agent (Chrome 142)
         settings.setUserAgentString(DESKTOP_USER_AGENT);
 
         CookieManager cookieManager = CookieManager.getInstance();
@@ -177,6 +183,18 @@ public class SlackAuthPlugin extends Plugin {
         });
 
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (request != null && request.getUrl() != null) {
+                    String url = request.getUrl().toString();
+                    if (url.startsWith("slack://")) {
+                        checkTokensAndCookies(view.getUrl(), call);
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 checkTokensAndCookies(url, call);
@@ -235,23 +253,37 @@ public class SlackAuthPlugin extends Plugin {
 
         // 1. Extract d cookie from CookieManager
         CookieManager cookieManager = CookieManager.getInstance();
-        String cookieStr = cookieManager.getCookie(currentUrl);
-        if (cookieStr == null) {
-            cookieStr = cookieManager.getCookie("https://teampicnic.slack.com");
-        }
-        if (cookieStr == null) {
-            cookieStr = cookieManager.getCookie("https://picnic.enterprise.slack.com");
-        }
+        cookieManager.flush();
+
+        String[] domainsToCheck = new String[]{
+                currentUrl,
+                "https://teampicnic.slack.com",
+                "https://picnic.enterprise.slack.com",
+                "https://app.slack.com",
+                "https://slack.com"
+        };
 
         String dCookie = null;
-        if (cookieStr != null) {
-            Matcher m = Pattern.compile("(?:^|;\\s*)d=([xoxd-]*[A-Za-z0-9%_-]+)").matcher(cookieStr);
-            if (m.find()) {
-                dCookie = m.group(1);
+        for (String domain : domainsToCheck) {
+            String cookieStr = cookieManager.getCookie(domain);
+            if (cookieStr != null) {
+                Matcher m = Pattern.compile("(?:^|;\\s*)d=([xoxd-]*[A-Za-z0-9%_-]+)").matcher(cookieStr);
+                if (m.find()) {
+                    dCookie = m.group(1);
+                    break;
+                }
             }
         }
 
         final String extractedCookie = dCookie;
+
+        // If user is logged in (we have d cookie) and stuck on an SSB/launch redirect page, redirect to real web client
+        if (extractedCookie != null && !hasRedirectedToApp && webView != null) {
+            if (currentUrl.contains("/ssb/redirect") || currentUrl.contains("/launch") || currentUrl.contains("/messages")) {
+                hasRedirectedToApp = true;
+                webView.loadUrl("https://app.slack.com/client/E088RCNNJN8/CAM2MJTA9");
+            }
+        }
 
         // 2. Extract token from localStorage / TS.boot_data via JS evaluation
         String js = "(function() {" +
