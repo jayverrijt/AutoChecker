@@ -1,17 +1,17 @@
-import { WebClient } from '@slack/web-api';
 import { db } from './db.js';
 
 export class SlackBotManager {
   constructor(io) {
     this.io = io;
-    this.slackClient = null;
     this.pollTimer = null;
     this.lastCheckedTs = null;
     this.processedMessageIds = new Set();
-    this.status = 'disconnected'; // 'connected' | 'disconnected' | 'polling' | 'error' | 'simulated'
+    this.status = 'disconnected'; // 'connected' | 'polling' | 'disconnected' | 'error' | 'simulated'
     this.lastError = null;
     this.resolvedChannelId = null;
     this.lastActivity = null;
+    this.authInfo = null;
+    this.recentChannelMessages = [];
 
     // Load history of processed messages so we don't double react on server reboot
     const history = db.getHistory();
@@ -40,32 +40,201 @@ export class SlackBotManager {
       status: this.status,
       lastError: this.lastError,
       lastActivity: this.lastActivity,
+      workspaceUrl: settings.workspaceUrl || 'https://picnic.enterprise.slack.com',
       channelName: settings.channelName,
       channelId: this.resolvedChannelId || settings.channelId,
       botSenderName: settings.botSenderName,
       autoReact: settings.autoReact,
+      pollIntervalMs: settings.pollIntervalMs || 1000,
       hasToken: Boolean(settings.slackToken && settings.slackToken.trim().length > 0),
-      processedCount: this.processedMessageIds.size
+      hasCookie: Boolean(settings.slackCookie && settings.slackCookie.trim().length > 0),
+      authInfo: this.authInfo,
+      processedCount: this.processedMessageIds.size,
+      recentMessagesCount: this.recentChannelMessages.length
     };
+  }
+
+  getApiBaseUrl() {
+    const settings = db.getSettings();
+    const ws = (settings.workspaceUrl || 'https://picnic.enterprise.slack.com').trim().replace(/\/+$/, '');
+    return `${ws}/api`;
+  }
+
+  /**
+   * Universal Slack API caller with Enterprise Grid session support (xoxc + d cookie)
+   */
+  async callSlackApi(endpoint, body = null, method = 'POST') {
+    const settings = db.getSettings();
+    const token = (settings.slackToken || '').trim();
+    if (!token) {
+      throw new Error('Geen Slack token geconfigureerd');
+    }
+
+    const baseUrl = this.getApiBaseUrl();
+    const url = `${baseUrl}/${endpoint}`;
+
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/plain, */*'
+    };
+
+    // Attach d cookie for Enterprise Grid xoxc session if present
+    if (settings.slackCookie && settings.slackCookie.trim()) {
+      let cookieVal = settings.slackCookie.trim();
+      if (!cookieVal.startsWith('d=')) {
+        cookieVal = `d=${cookieVal}`;
+      }
+      headers['Cookie'] = cookieVal;
+    }
+
+    let options = {
+      method,
+      headers
+    };
+
+    if (body) {
+      headers['Content-Type'] = 'application/json; charset=utf-8';
+      options.body = JSON.stringify(body);
+    }
+
+    try {
+      const response = await fetch(url, options);
+      const data = await response.json();
+      return data;
+    } catch (err) {
+      // Fallback to standard slack.com/api if enterprise URL failed with network issue
+      if (!baseUrl.includes('slack.com/api')) {
+        try {
+          const fallbackUrl = `https://slack.com/api/${endpoint}`;
+          const fallbackRes = await fetch(fallbackUrl, options);
+          return await fallbackRes.json();
+        } catch (fbErr) {
+          throw err;
+        }
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Parse channel input (supports channel ID like C012345 or full link like https://picnic.enterprise.slack.com/archives/C0123456789)
+   */
+  extractChannelId(input) {
+    if (!input) return null;
+    const clean = input.trim();
+    
+    // Check if it's an archive URL: .../archives/C0123456789/...
+    const urlMatch = clean.match(/\/archives\/([A-Z0-9]+)/i);
+    if (urlMatch) {
+      return urlMatch[1];
+    }
+
+    // Check if it's already a channel ID (starts with C or G)
+    if (/^[CG][A-Z0-9]{8,12}$/i.test(clean)) {
+      return clean.toUpperCase();
+    }
+
+    return null;
+  }
+
+  /**
+   * Test real Slack connection and channel access
+   */
+  async testConnection() {
+    const settings = db.getSettings();
+    if (!settings.slackToken) {
+      return { ok: false, error: 'Geen token ingevuld. Voer eerst je xoxc of xoxp token in.' };
+    }
+
+    try {
+      this.log('info', `Verbinding testen met ${settings.workspaceUrl || 'picnic.enterprise.slack.com'}...`);
+      const authRes = await this.callSlackApi('auth.test', {});
+      
+      if (!authRes.ok) {
+        this.status = 'error';
+        this.lastError = authRes.error || 'Authenticatie mislukt';
+        this.log('error', `Slack authenticatiefout: ${this.lastError}`);
+        return { ok: false, error: this.lastError };
+      }
+
+      this.authInfo = {
+        user: authRes.user,
+        userId: authRes.user_id,
+        team: authRes.team,
+        teamId: authRes.team_id,
+        url: authRes.url
+      };
+
+      this.log('success', `Verbonden met Picnic Slack als runner: ${authRes.user} (${authRes.team})!`);
+
+      // Try resolving channel
+      await this.resolveChannel(settings);
+
+      let channelTest = null;
+      if (this.resolvedChannelId) {
+        const historyRes = await this.callSlackApi(
+          `conversations.history?channel=${this.resolvedChannelId}&limit=5`,
+          null,
+          'GET'
+        );
+
+        if (historyRes.ok && historyRes.messages) {
+          channelTest = {
+            ok: true,
+            channelId: this.resolvedChannelId,
+            messageCount: historyRes.messages.length,
+            latestMessage: historyRes.messages[0] ? {
+              text: historyRes.messages[0].text?.slice(0, 100),
+              user: historyRes.messages[0].user || historyRes.messages[0].username,
+              ts: historyRes.messages[0].ts
+            } : null
+          };
+          this.log('success', `Kanaal #${settings.channelName} succesvol gecontroleerd!`);
+        } else {
+          channelTest = { ok: false, error: historyRes.error };
+          this.log('warning', `Kanaal #${settings.channelName} kan niet gelezen worden: ${historyRes.error}`);
+        }
+      }
+
+      return {
+        ok: true,
+        auth: this.authInfo,
+        channel: channelTest
+      };
+    } catch (err) {
+      this.status = 'error';
+      this.lastError = err.message;
+      this.log('error', `Verbindingsfout: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
   }
 
   async initialize() {
     const settings = db.getSettings();
     if (!settings.slackToken || !settings.slackToken.trim()) {
       this.status = 'disconnected';
-      this.log('info', 'Geen Slack token geconfigureerd. Slack bot staat in simulatie/wachtstand.');
+      this.log('info', 'Geen Slack credentials geconfigureerd. Lokale bot staat in wachtstand.');
       return;
     }
 
     try {
       this.status = 'connecting';
-      this.slackClient = new WebClient(settings.slackToken.trim());
+      const authRes = await this.callSlackApi('auth.test', {});
       
-      // Test authentication
-      const authTest = await this.slackClient.auth.test();
-      this.log('success', `Slack verbinding geslaagd! Bot/Gebruiker: ${authTest.user || authTest.bot_id} (Team: ${authTest.team})`);
-      
-      // Resolve channel ID if not provided
+      if (!authRes.ok) {
+        throw new Error(authRes.error || 'Authenticatie mislukt');
+      }
+
+      this.authInfo = {
+        user: authRes.user,
+        userId: authRes.user_id,
+        team: authRes.team,
+        url: authRes.url
+      };
+
+      this.log('success', `Verbonden met Picnic Slack (${settings.workspaceUrl}) als: ${authRes.user}!`);
+
       await this.resolveChannel(settings);
 
       this.status = 'polling';
@@ -73,46 +242,60 @@ export class SlackBotManager {
     } catch (err) {
       this.status = 'error';
       this.lastError = err.message || 'Fout bij verbinden met Slack';
-      this.log('error', `Slack initialisatie mislukt: ${this.lastError}`);
+      this.log('error', `Initialisatie mislukt: ${this.lastError}`);
     }
   }
 
   async resolveChannel(settings) {
-    if (settings.channelId && settings.channelId.startsWith('C')) {
-      this.resolvedChannelId = settings.channelId;
+    // 1. Direct channel ID in settings.channelId
+    const directFromId = this.extractChannelId(settings.channelId);
+    if (directFromId) {
+      this.resolvedChannelId = directFromId;
       return;
     }
 
+    // 2. Extracted from settings.channelName if user pasted a link
+    const directFromName = this.extractChannelId(settings.channelName);
+    if (directFromName) {
+      this.resolvedChannelId = directFromName;
+      db.saveSettings({ channelId: directFromName });
+      return;
+    }
+
+    // 3. Try searching by channel name in conversations.list
     try {
       const channelNameClean = (settings.channelName || 'nl-dist-runners-hlm').replace(/^#/, '');
-      this.log('info', `Zoeken naar Slack kanaal #${channelNameClean}...`);
-      
-      const res = await this.slackClient.conversations.list({
-        types: 'public_channel,private_channel',
-        limit: 1000
-      });
+      this.log('info', `Zoeken naar kanaal #${channelNameClean} op Picnic Slack...`);
 
-      const found = res.channels?.find(c => c.name === channelNameClean);
-      if (found) {
-        this.resolvedChannelId = found.id;
-        this.log('success', `Kanaal #${channelNameClean} gevonden (ID: ${found.id})`);
-        db.saveSettings({ channelId: found.id });
-      } else {
-        this.log('warning', `Kanaal #${channelNameClean} niet gevonden in lijst. Zorg dat de bot is uitgenodigd (/invite @bot).`);
+      const res = await this.callSlackApi(
+        'conversations.list?types=public_channel,private_channel&limit=1000',
+        null,
+        'GET'
+      );
+
+      if (res.ok && res.channels) {
+        const found = res.channels.find(c => c.name === channelNameClean);
+        if (found) {
+          this.resolvedChannelId = found.id;
+          this.log('success', `Kanaal #${channelNameClean} gevonden (ID: ${found.id})`);
+          db.saveSettings({ channelId: found.id });
+          return;
+        }
       }
+      this.log('warning', `Kon kanaal #${channelNameClean} niet automatisch vinden in lijst. Plak eventueel direct de kanaallink in Instellingen.`);
     } catch (err) {
-      this.log('warning', `Kon kanaal niet automatisch resolven: ${err.message}`);
+      this.log('warning', `Fout bij opzoeken kanaal: ${err.message}`);
     }
   }
 
   startPolling() {
     this.stopPolling();
     const settings = db.getSettings();
-    const interval = Math.max(1500, settings.pollIntervalMs || 2500);
+    // Default 1000ms polling for race speed
+    const interval = Math.max(500, settings.pollIntervalMs || 1000);
 
-    this.log('info', `Polling gestart voor #${settings.channelName} (interval: ${interval}ms)`);
+    this.log('info', `Lokale monitor actief voor #${settings.channelName} (${interval}ms interval)`);
     
-    // Poll loop
     this.pollTimer = setInterval(async () => {
       await this.pollChannelMessages();
     }, interval);
@@ -126,39 +309,38 @@ export class SlackBotManager {
   }
 
   async pollChannelMessages() {
-    if (!this.slackClient || !this.resolvedChannelId) return;
+    if (!this.resolvedChannelId || this.status !== 'polling') return;
 
     try {
-      const query = {
-        channel: this.resolvedChannelId,
-        limit: 10
-      };
+      let queryUrl = `conversations.history?channel=${this.resolvedChannelId}&limit=8`;
       if (this.lastCheckedTs) {
-        query.oldest = this.lastCheckedTs;
+        queryUrl += `&oldest=${this.lastCheckedTs}`;
       }
 
-      const history = await this.slackClient.conversations.history(query);
-      if (!history.messages || history.messages.length === 0) return;
+      const res = await this.callSlackApi(queryUrl, null, 'GET');
+      if (!res.ok || !res.messages || res.messages.length === 0) return;
 
-      // Update newest ts
-      const newestMessage = history.messages[0];
+      // Update newest timestamp
+      const newestMessage = res.messages[0];
       if (newestMessage && (!this.lastCheckedTs || parseFloat(newestMessage.ts) > parseFloat(this.lastCheckedTs))) {
         this.lastCheckedTs = newestMessage.ts;
       }
 
+      // Update recent channel messages
+      this.recentChannelMessages = res.messages.slice(0, 10);
+      if (this.io) {
+        this.io.emit('bot:recent_messages', this.recentChannelMessages);
+      }
+
       // Process messages from oldest to newest
-      const messagesToProcess = [...history.messages].reverse();
+      const messagesToProcess = [...res.messages].reverse();
       for (const msg of messagesToProcess) {
         if (!this.processedMessageIds.has(msg.ts)) {
-          await this.processMessage(msg);
+          await this.processMessage(msg, false);
         }
       }
     } catch (err) {
-      if (err.data?.error === 'channel_not_found') {
-        this.log('error', `Kanaal ${this.resolvedChannelId} niet gevonden. Controleer kanaal ID of nodig bot uit.`);
-      } else {
-        console.error('Error during Slack poll:', err.message);
-      }
+      console.error('Polling error:', err.message);
     }
   }
 
@@ -169,8 +351,6 @@ export class SlackBotManager {
   parsePlannerMessage(text, username = '') {
     if (!text) return null;
 
-    // Check if message is relevant (sender Day-Planning-Sender or mentions MIDDAG/OCHTEND with date and overschotten)
-    const settings = db.getSettings();
     const senderMatch = username.toLowerCase().includes('day-plan') || 
                         username.toLowerCase().includes('planning') ||
                         text.includes('Graag voor') ||
@@ -178,7 +358,6 @@ export class SlackBotManager {
                         text.includes('Check je vrij') ||
                         text.includes('HLM Planning');
 
-    // Extract Date: e.g. 17-10-2026 or 17-10-26
     const dateMatch = text.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/);
     let parsedDate = null;
     let isoDate = null;
@@ -192,7 +371,6 @@ export class SlackBotManager {
       isoDate = `${year}-${month}-${day}`;
     }
 
-    // Extract Period: MIDDAG or OCHTEND or AVOND
     let period = null;
     if (/MIDDAG/i.test(text)) {
       period = 'MIDDAG';
@@ -202,7 +380,6 @@ export class SlackBotManager {
       period = 'AVOND';
     }
 
-    // Extract Overschotten
     const overschotten = {};
     const overschotShift1 = text.match(/Shift\s*1\s*:\s*(\d+)/i);
     const overschotShift2 = text.match(/Shift\s*2\s*:\s*(\d+)/i);
@@ -221,12 +398,6 @@ export class SlackBotManager {
     };
   }
 
-  /**
-   * Determine which emoji to react with based on user's shift:
-   * 1-red voor M1 en S1
-   * 2-red voor M2 en S2
-   * 3-red voor S3
-   */
   getEmojiForShiftBlock(block) {
     const settings = db.getSettings();
     const mapping = settings.emojiMapping || {
@@ -240,7 +411,7 @@ export class SlackBotManager {
   }
 
   /**
-   * Process incoming Slack message
+   * Process message and trigger real or simulated Slack reaction
    */
   async processMessage(msg, isSimulation = false) {
     const settings = db.getSettings();
@@ -254,12 +425,11 @@ export class SlackBotManager {
 
     this.log('info', `Day-Planning-Sender bericht gedetecteerd! Datum: ${parsed.parsedDate || 'onbekend'}, Blok: ${parsed.period || 'onbekend'}`);
 
-    // Determine target date
     const targetDateIso = parsed.isoDate || new Date().toISOString().split('T')[0];
     const userShift = db.getShiftForDate(targetDateIso);
 
     if (!userShift || userShift.block === 'none') {
-      const reason = `Geen actieve shift gevonden in rooster voor ${targetDateIso}. Geen vrijcheck reactie nodig.`;
+      const reason = `Geen actieve shift in jouw rooster voor ${targetDateIso}. Geen reactie nodig.`;
       this.log('info', reason);
       
       const record = {
@@ -278,8 +448,7 @@ export class SlackBotManager {
       return record;
     }
 
-    // Check if shift matches the period (e.g. OCHTEND is M1/M2, MIDDAG is S1/S2/S3)
-    const block = userShift.block; // 'M1', 'M2', 'S1', 'S2', 'S3'
+    const block = userShift.block;
     let isPeriodMatch = true;
 
     if (parsed.period === 'OCHTEND' && !['M1', 'M2'].includes(block)) {
@@ -289,7 +458,7 @@ export class SlackBotManager {
     }
 
     if (!isPeriodMatch) {
-      const reason = `Bericht is voor ${parsed.period}, maar je bent ingeroosterd voor ${block}. Geen match.`;
+      const reason = `Bericht is voor ${parsed.period}, maar je rooster heeft ${block}. Geen match.`;
       this.log('warning', reason);
       const record = {
         messageTs: msg.ts,
@@ -307,9 +476,8 @@ export class SlackBotManager {
       return record;
     }
 
-    // Check if Vrijcheck is enabled for this shift
     if (userShift.vrijcheckActive === false) {
-      const reason = `Vrijcheck staat uitgeschakeld voor ${block} op ${targetDateIso}.`;
+      const reason = `Vrijcheck staat UIT voor ${block} op ${targetDateIso}.`;
       this.log('info', reason);
       const record = {
         messageTs: msg.ts,
@@ -327,50 +495,51 @@ export class SlackBotManager {
       return record;
     }
 
-    // Determine target emoji
     const emojiName = this.getEmojiForShiftBlock(block);
     if (!emojiName) {
       this.log('error', `Kon geen emoji vinden voor shift block ${block}`);
       return null;
     }
 
-    this.log('info', `Shift match gevonden! Datum: ${targetDateIso}, Blok: ${block} -> Emoji: :${emojiName}:`);
+    this.log('info', `Shift match! Datum: ${targetDateIso}, Blok: ${block} ➜ Reageren met :${emojiName}:...`);
 
-    // Execute reaction
     const startTime = Date.now();
     let reactionSuccess = false;
     let errorDetail = null;
 
-    if (isSimulation || !this.slackClient) {
-      // Simulation mode with simulated API delay (120ms - 280ms)
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 160) + 120));
+    if (isSimulation) {
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 100) + 120));
       reactionSuccess = true;
-      this.log('success', `[SIMULATIE] Reactie :${emojiName}: succesvol geplaatst!`);
+      this.log('success', `[SIMULATIE] Reactie :${emojiName}: geplaatst!`);
     } else {
       try {
-        const res = await this.slackClient.reactions.add({
+        const res = await this.callSlackApi('reactions.add', {
           channel: this.resolvedChannelId || settings.channelId,
           timestamp: msg.ts,
           name: emojiName
         });
-        reactionSuccess = res.ok === true;
-        this.log('success', `Reactie :${emojiName}: geplaatst op Slack bericht!`);
-      } catch (err) {
-        if (err.data?.error === 'already_reacted') {
+
+        if (res.ok) {
           reactionSuccess = true;
-          this.log('info', `Reactie :${emojiName}: was al eerder geplaatst op dit bericht.`);
+          this.log('success', `Echte Slack reactie :${emojiName}: succesvol geplaatst op Picnic Slack!`);
+        } else if (res.error === 'already_reacted') {
+          reactionSuccess = true;
+          this.log('info', `Je had al eerder gereageerd met :${emojiName}: op dit bericht.`);
         } else {
           reactionSuccess = false;
-          errorDetail = err.data?.error || err.message;
-          this.log('error', `Fout bij toevoegen reactie :${emojiName}:: ${errorDetail}`);
+          errorDetail = res.error || 'Onbekende fout';
+          this.log('error', `Slack reactie mislukt met fout: ${errorDetail}`);
         }
+      } catch (err) {
+        reactionSuccess = false;
+        errorDetail = err.message;
+        this.log('error', `Verbindingsfout tijdens reactie: ${errorDetail}`);
       }
     }
 
     const latencyMs = Date.now() - startTime;
     this.processedMessageIds.add(msg.ts);
 
-    // Update shift status in database
     const reactionStatus = {
       success: reactionSuccess,
       emoji: emojiName,
@@ -385,7 +554,6 @@ export class SlackBotManager {
       reactionStatus
     });
 
-    // Record in history
     const historyItem = {
       messageTs: msg.ts,
       messageDate: parsed.parsedDate || targetDateIso,
@@ -402,16 +570,12 @@ export class SlackBotManager {
     };
     db.addHistoryItem(historyItem);
 
-    // Broadcast to UI
     this.io.emit('bot:reaction_event', historyItem);
     this.io.emit('shifts:updated', updatedShifts);
 
     return historyItem;
   }
 
-  /**
-   * Simulate Day-Planning-Sender posting a message
-   */
   async simulateDayPlannerMessage({
     period = 'MIDDAG',
     date = '17-10-2026',
@@ -423,15 +587,15 @@ export class SlackBotManager {
       username: 'Day-Planning-Sender',
       text: `:picnic: ${period} ${date}
 
- Graag voor 11:00u bevestigen dat je komt d.m.v. 
+Graag voor 11:00u bevestigen dat je komt d.m.v. 
 
- Ziek melden?
+Ziek melden?
 De ziekmeld-procedure staat in de Bookmarks!
 
- Tekorten
+Tekorten
 Geen tekort
 
- Overschotten
+Overschotten
 Shift 1: ${overschotten.shift1}
 Shift 2: ${overschotten.shift2}
 ${overschotten.shift3 ? `Shift 3: ${overschotten.shift3}` : ''}
@@ -446,11 +610,11 @@ Vraag de R+ om een taak
 R+: @Martijn 13:00  20:00
 TD/SD: @Shakira van Asperen
 
- Nog vragen? Check de bookmarks in dit kanaal en/of de RunnerWiki @channel`,
+Nog vragen? Check de bookmarks in dit kanaal en/of de RunnerWiki @channel`,
       channel: this.resolvedChannelId || 'C_SIMULATED_HLM'
     };
 
-    this.log('info', `[SIMULATIE] Day-Planning-Sender heeft een nieuw bericht geplaatst in #nl-dist-runners-hlm (${period} ${date})`);
+    this.log('info', `[SIMULATIE] Bericht van Day-Planning-Sender (${period} ${date})`);
     return await this.processMessage(fakeMessage, true);
   }
 }

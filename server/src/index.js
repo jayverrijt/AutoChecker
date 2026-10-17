@@ -110,6 +110,12 @@ app.post('/api/bot/reconnect', async (req, res) => {
   res.json(status);
 });
 
+app.post('/api/bot/test-connection', async (req, res) => {
+  const result = await botManager.testConnection();
+  io.emit('bot:status', botManager.getStatus());
+  res.json(result);
+});
+
 // 4. Reaction History
 app.get('/api/history', (req, res) => {
   res.json(db.getHistory());

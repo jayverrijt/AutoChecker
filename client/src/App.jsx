@@ -37,6 +37,7 @@ export function App() {
   const [settings, setSettings] = useState(null);
   const [botStatus, setBotStatus] = useState(null);
   const [history, setHistory] = useState([]);
+  const [recentMessages, setRecentMessages] = useState([]);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalDate, setModalDate] = useState(initialDate);
@@ -68,6 +69,10 @@ export function App() {
 
     s.on('bot:status', (data) => {
       setBotStatus(data);
+    });
+
+    s.on('bot:recent_messages', (data) => {
+      setRecentMessages(data);
     });
 
     s.on('history:updated', (data) => {
@@ -244,6 +249,11 @@ export function App() {
     }
   };
 
+  const handleTestConnection = async () => {
+    const res = await fetch(`${SOCKET_URL}/api/bot/test-connection`, { method: 'POST' });
+    return await res.json();
+  };
+
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-neutral-100 flex flex-col items-center justify-center p-0 md:p-6 select-none font-sans">
       {/* Desktop Top Toolbar (Frame Toggle & Info) */}
@@ -362,9 +372,11 @@ export function App() {
             <SlackLiveView
               botStatus={botStatus}
               history={history}
+              recentMessages={recentMessages}
               onSimulate={handleSimulate}
               onClearHistory={handleClearHistory}
               onReconnect={handleReconnect}
+              onNavigateToSettings={() => setActiveTab('settings')}
               shifts={shifts}
             />
           </div>
@@ -373,13 +385,13 @@ export function App() {
         {activeTab === 'settings' && (
           <div className="flex-1 overflow-y-auto pt-2">
             <div className="px-4 py-2 border-b border-[#22242a]">
-              <h2 className="text-base font-bold text-white">Instellingen &amp; Tokens</h2>
-              <p className="text-xs text-neutral-400">Slack token en shift emoji configuratie</p>
+              <h2 className="text-base font-bold text-white">Instellingen &amp; Sessie</h2>
+              <p className="text-xs text-neutral-400">Picnic Enterprise Slack sessie &amp; blokken</p>
             </div>
             <SettingsView
               settings={settings}
               onSaveSettings={handleSaveSettings}
-              onReconnect={handleReconnect}
+              onTestConnection={handleTestConnection}
               botStatus={botStatus}
             />
           </div>

@@ -9,7 +9,13 @@ import {
   Save, 
   RefreshCw, 
   Info,
-  CheckCircle2
+  CheckCircle2,
+  AlertTriangle,
+  Globe,
+  Copy,
+  Check,
+  HelpCircle,
+  Play
 } from 'lucide-react';
 import { SlackEmoji } from './SlackEmoji';
 import { sounds } from '../utils/audio';
@@ -17,16 +23,18 @@ import { sounds } from '../utils/audio';
 export const SettingsView = ({
   settings,
   onSaveSettings,
-  onReconnect,
-  botStatus
+  botStatus,
+  onTestConnection
 }) => {
   const [formData, setFormData] = useState({
+    workspaceUrl: 'https://picnic.enterprise.slack.com',
     slackToken: '',
+    slackCookie: '',
     channelName: '#nl-dist-runners-hlm',
     channelId: '',
     botSenderName: 'Day-Planning-Sender',
     autoReact: true,
-    pollIntervalMs: 2500,
+    pollIntervalMs: 1000,
     soundEnabled: true,
     emojiMapping: {
       M1: '1-red',
@@ -39,12 +47,17 @@ export const SettingsView = ({
 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [showHelper, setShowHelper] = useState(false);
+  const [copiedSnippet, setCopiedSnippet] = useState(false);
 
   useEffect(() => {
     if (settings) {
       setFormData((prev) => ({
         ...prev,
         ...settings,
+        workspaceUrl: settings.workspaceUrl || 'https://picnic.enterprise.slack.com',
         emojiMapping: {
           ...prev.emojiMapping,
           ...(settings.emojiMapping || {})
@@ -70,6 +83,24 @@ export const SettingsView = ({
     }));
   };
 
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      // First save current form data so backend uses latest inputs
+      await onSaveSettings(formData);
+      const res = await onTestConnection();
+      setTestResult(res);
+      if (res?.ok) {
+        sounds.playSuccess();
+      }
+    } catch (err) {
+      setTestResult({ ok: false, error: err.message });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSaving(true);
@@ -84,39 +115,147 @@ export const SettingsView = ({
     }
   };
 
+  const copyConsoleSnippet = () => {
+    const code = `console.log("%c--- JOUW PICNIC SLACK CREDENTIALS ---", "color:#10b981;font-weight:bold;font-size:14px;");
+console.log("TOKEN (xoxc):", window.boot_data.api_token);
+console.log("COOKIE (d):", document.cookie.match(/d=([^;]+)/)?.[1]);
+copy("TOKEN: " + window.boot_data.api_token + "\\nCOOKIE: " + document.cookie.match(/d=([^;]+)/)?.[1]);
+alert("Token en Cookie gekopieerd naar klembord!");`;
+    
+    navigator.clipboard.writeText(code);
+    setCopiedSnippet(true);
+    setTimeout(() => setCopiedSnippet(false), 3000);
+  };
+
   return (
     <div className="p-4 space-y-5 pb-24 overflow-y-auto">
-      {/* Settings Form */}
+      {/* Picnic Enterprise Slack Status Banner */}
+      <div className="bg-[#1a1b20] border border-[#272832] rounded-2xl p-4 shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-red-600/20 border border-red-500/30 flex items-center justify-center">
+              <SlackEmoji name="picnic" size="sm" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">Picnic Enterprise Slack</h3>
+              <p className="text-[11px] text-neutral-400 font-mono">
+                {formData.workspaceUrl || 'picnic.enterprise.slack.com'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowHelper(!showHelper)}
+            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 font-medium bg-blue-500/10 px-2.5 py-1.5 rounded-lg border border-blue-500/20 transition-colors"
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+            <span>Hulp bij inloggen</span>
+          </button>
+        </div>
+
+        {/* Step-by-step instructions accordion */}
+        {showHelper && (
+          <div className="bg-[#141418] border border-[#262835] rounded-xl p-3.5 space-y-2.5 text-xs text-neutral-300 animate-fadeIn">
+            <div className="font-bold text-white flex items-center gap-1.5">
+              <span>Hoe haal je je sessie op in 15 seconden?</span>
+            </div>
+            <ol className="list-decimal list-inside space-y-1.5 text-[11px] text-neutral-300 leading-relaxed">
+              <li>
+                Open <a href="https://picnic.enterprise.slack.com" target="_blank" rel="noreferrer" className="text-blue-400 underline">picnic.enterprise.slack.com</a> in je browser (Chrome/Edge/Brave).
+              </li>
+              <li>
+                Druk op <kbd className="bg-neutral-800 px-1 py-0.5 rounded border border-neutral-700 font-mono">F12</kbd> (of <kbd className="bg-neutral-800 px-1 py-0.5 rounded border border-neutral-700 font-mono">Cmd+Option+I</kbd> op Mac) om DevTools te openen.
+              </li>
+              <li>
+                Ga naar het tabblad <strong>Console</strong>.
+              </li>
+              <li>
+                Klik op de knop hieronder en plak het script in de console:
+              </li>
+            </ol>
+
+            <button
+              type="button"
+              onClick={copyConsoleSnippet}
+              className="w-full py-2 px-3 bg-[#232530] hover:bg-[#2b2d3a] border border-[#353748] rounded-lg text-xs font-semibold text-white flex items-center justify-center gap-2 transition-all"
+            >
+              {copiedSnippet ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-300">Script Gekopieerd!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-neutral-400" />
+                  <span>Kopieer 1-regel console snippet</span>
+                </>
+              )}
+            </button>
+            <p className="text-[10px] text-neutral-500">
+              Het script toont direct je <code className="text-neutral-400">xoxc-</code> token en <code className="text-neutral-400">d</code> cookie.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Main Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Slack Authentication Card */}
-        <div className="bg-[#1a1b20] border border-[#272832] rounded-2xl p-4 space-y-4">
+        {/* Connection Credentials */}
+        <div className="bg-[#1a1b20] border border-[#272832] rounded-2xl p-4 space-y-3.5">
           <div className="flex items-center gap-2">
             <Key className="w-4 h-4 text-blue-400" />
-            <h3 className="text-sm font-bold text-white">Slack Authenticatie</h3>
+            <h3 className="text-sm font-bold text-white">Picnic Sessie &amp; Token</h3>
           </div>
 
           <div>
             <label className="text-xs text-neutral-400 block mb-1">
-              Slack User OAuth Token (<code className="text-blue-300 font-mono">xoxp-...</code>) of Bot Token (<code className="text-blue-300 font-mono">xoxb-...</code>)
+              Workspace URL
+            </label>
+            <div className="flex items-center gap-1.5 bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white">
+              <Globe className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+              <input
+                type="text"
+                value={formData.workspaceUrl}
+                onChange={(e) => handleChange('workspaceUrl', e.target.value)}
+                placeholder="https://picnic.enterprise.slack.com"
+                className="bg-transparent outline-none w-full font-mono text-xs"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-neutral-400 block mb-1">
+              User Token (<code className="text-blue-300 font-mono">xoxc-...</code> of <code className="text-blue-300 font-mono">xoxp-...</code>)
             </label>
             <input
               type="password"
               value={formData.slackToken || ''}
               onChange={(e) => handleChange('slackToken', e.target.value)}
-              placeholder="xoxp-..."
-              className="w-full bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2.5 text-xs text-white font-mono outline-none focus:border-blue-500"
+              placeholder="xoxc-..."
+              className="w-full bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
             />
-            <p className="text-[11px] text-neutral-400 mt-1.5 flex items-start gap-1">
-              <Info className="w-3.5 h-3.5 text-neutral-400 shrink-0 mt-0.5" />
-              <span>
-                Tip: Als je reageert vanuit je persoonlijke Slack account, gebruik dan je eigen <code className="text-neutral-300">xoxp-</code> user token met <code className="text-neutral-300">reactions:write</code> en <code className="text-neutral-300">channels:history</code> permissies. Zonder token draait de bot in ingebouwde simulatiemodus.
-              </span>
+          </div>
+
+          <div>
+            <label className="text-xs text-neutral-400 block mb-1">
+              Session Cookie <code className="text-blue-300 font-mono">d</code> (<code className="text-blue-300 font-mono">xoxd-...</code>)
+            </label>
+            <input
+              type="password"
+              value={formData.slackCookie || ''}
+              onChange={(e) => handleChange('slackCookie', e.target.value)}
+              placeholder="xoxd-..."
+              className="w-full bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
+            />
+            <p className="text-[10px] text-neutral-500 mt-1">
+              Vereist voor Enterprise Grid zodat Slack jouw eigen persoonlijke reactie plaatst.
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 pt-1">
             <div>
-              <label className="text-xs text-neutral-400 block mb-1">Slack Kanaal</label>
+              <label className="text-xs text-neutral-400 block mb-1">Kanaalnaam of Link</label>
               <div className="flex items-center gap-1.5 bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white">
                 <Hash className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
                 <input
@@ -130,19 +269,76 @@ export const SettingsView = ({
             </div>
 
             <div>
-              <label className="text-xs text-neutral-400 block mb-1">Afzender Filter</label>
-              <div className="flex items-center gap-1.5 bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white">
-                <Bot className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                <input
-                  type="text"
-                  value={formData.botSenderName}
-                  onChange={(e) => handleChange('botSenderName', e.target.value)}
-                  className="bg-transparent outline-none w-full font-sans text-xs"
-                  placeholder="Day-Planning-Sender"
-                />
-              </div>
+              <label className="text-xs text-neutral-400 block mb-1">Kanaal ID (Optioneel)</label>
+              <input
+                type="text"
+                value={formData.channelId || ''}
+                onChange={(e) => handleChange('channelId', e.target.value)}
+                className="w-full bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
+                placeholder="C0123456789"
+              />
             </div>
           </div>
+
+          {/* Test connection button */}
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={handleTestConnection}
+              disabled={isTesting}
+              className="w-full py-2.5 px-3 bg-[#272a35] hover:bg-[#303442] active:scale-[0.99] border border-[#3b3f52] rounded-xl text-xs font-bold text-white flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+            >
+              {isTesting ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Slack Verbinding Testen...</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
+                  <span>Test Echte Slack Verbinding</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Test results banner */}
+          {testResult && (
+            <div
+              className={`p-3 rounded-xl border text-xs space-y-1 animate-fadeIn ${
+                testResult.ok
+                  ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+                  : 'bg-red-950/40 border-red-500/40 text-red-200'
+              }`}
+            >
+              {testResult.ok ? (
+                <>
+                  <div className="font-bold flex items-center gap-1.5 text-emerald-300">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>Verbonden met Picnic Slack!</span>
+                  </div>
+                  <div className="text-[11px] text-emerald-300/90 pl-5">
+                    Runner: <strong>{testResult.auth?.user}</strong> • Team: {testResult.auth?.team}
+                  </div>
+                  {testResult.channel?.ok && (
+                    <div className="text-[11px] text-emerald-300/80 pl-5">
+                      Kanaal #{formData.channelName} actief ({testResult.channel.messageCount} recente berichten)
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="font-bold flex items-center gap-1.5 text-red-300">
+                    <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                    <span>Verbinding Mislukt</span>
+                  </div>
+                  <div className="text-[11px] text-red-300/90 pl-5">
+                    {testResult.error || 'Controleer je token en cookie.'}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Shift Block -> Emoji Mapping */}
@@ -150,13 +346,13 @@ export const SettingsView = ({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Smile className="w-4 h-4 text-amber-400" />
-              <h3 className="text-sm font-bold text-white">Emoji Configuratie per Shift</h3>
+              <h3 className="text-sm font-bold text-white">Emoji per Shift Blok</h3>
             </div>
-            <span className="text-[11px] text-neutral-400">1-red, 2-red, 3-red</span>
+            <span className="text-[11px] text-neutral-400 font-mono">1-red, 2-red, 3-red</span>
           </div>
 
           <p className="text-xs text-neutral-400">
-            Volgens Picnic runner regels reageert de bot met:
+            Koppeling van Picnic shiftblokken aan de juiste rode emoji reactie:
           </p>
 
           <div className="space-y-2">
@@ -198,13 +394,13 @@ export const SettingsView = ({
           </div>
         </div>
 
-        {/* Toggles */}
+        {/* Polling Speed & Toggles */}
         <div className="bg-[#1a1b20] border border-[#272832] rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs font-bold text-white">Automatisch Reageren</div>
               <div className="text-[11px] text-neutral-400">
-                Direct reageren zodra Day-Planning-Sender bericht plaatst
+                Direct reageren zodra Day-Planning-Sender post
               </div>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
@@ -219,13 +415,27 @@ export const SettingsView = ({
           </div>
 
           <div className="flex items-center justify-between pt-2 border-t border-[#262732]">
+            <div>
+              <div className="text-xs font-bold text-white">Controle Snelheid (Polling)</div>
+              <div className="text-[11px] text-neutral-400">Hoe snel het kanaal wordt gescand</div>
+            </div>
+            <select
+              value={formData.pollIntervalMs}
+              onChange={(e) => handleChange('pollIntervalMs', Number(e.target.value))}
+              className="bg-[#22242c] border border-[#2e303c] rounded-lg px-2.5 py-1 text-xs text-white outline-none"
+            >
+              <option value="500">500ms (Bliksemsnel)</option>
+              <option value="1000">1000ms (Aanbevolen)</option>
+              <option value="2000">2000ms</option>
+            </select>
+          </div>
+
+          <div className="flex items-center justify-between pt-2 border-t border-[#262732]">
             <div className="flex items-center gap-2">
               <Volume2 className="w-4 h-4 text-blue-400" />
               <div>
                 <div className="text-xs font-bold text-white">Geluidseffecten</div>
-                <div className="text-[11px] text-neutral-400">
-                  Speel een meldingstoon af bij een reactie
-                </div>
+                <div className="text-[11px] text-neutral-400">Notificatiechime bij reactie</div>
               </div>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
@@ -254,7 +464,7 @@ export const SettingsView = ({
           ) : (
             <>
               <Save className="w-4 h-4" />
-              <span>Instellingen Opslaan &amp; Herverbinden</span>
+              <span>Instellingen Opslaan &amp; Toepassen</span>
             </>
           )}
         </button>

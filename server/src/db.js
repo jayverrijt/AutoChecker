@@ -15,12 +15,14 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 
 const DEFAULT_SETTINGS = {
-  slackToken: '', // User token xoxp-... or Bot token xoxb-...
+  workspaceUrl: 'https://picnic.enterprise.slack.com',
+  slackToken: '', // xoxc-... (Enterprise session) of xoxp-... (User token)
+  slackCookie: '', // d=xoxd-... cookie voor Enterprise Slack
   channelName: '#nl-dist-runners-hlm',
   channelId: '',
   botSenderName: 'Day-Planning-Sender',
   autoReact: true,
-  pollIntervalMs: 2500,
+  pollIntervalMs: 1000,
   emojiMapping: {
     M1: '1-red',
     M2: '2-red',

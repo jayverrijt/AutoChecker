@@ -49,11 +49,20 @@ Geen Slack token bij de hand? Geen probleem!
 
 ---
 
-## ⚙️ Echte Slack Verbinding Instellen
+## 🏢 Echte Picnic Enterprise Slack Verbinding (`picnic.enterprise.slack.com`)
 
-Ga in de app naar het tabblad **Instellingen**:
-1. Vul je **Slack Token** in:
-   - **Persoonlijke User Token (`xoxp-...`)**: Aanbevolen als je wilt dat de reactie uit jouw eigen naam wordt geplaatst. Permissies: `reactions:write`, `channels:history`, `channels:read`.
-   - **Bot Token (`xoxb-...`)**: Als je een Slack App hebt geïnstalleerd in de workspace.
-2. Kanaalnaam: `#nl-dist-runners-hlm`
-3. Klik op **Instellingen Opslaan & Herverbinden**.
+Omdat Picnic draait op **Slack Enterprise Grid**, kunnen gewone runners geen externe Slack Apps toevoegen. De ingebouwde lokale bot lost dit op door direct gebruik te maken van jouw **eigen sessie**: de reacties worden geplaatst **onder jouw eigen naam/account**, precies zoals nodig is voor de R+ planning!
+
+### Hoe haal je je sessie op in 15 seconden?
+1. Open **[picnic.enterprise.slack.com](https://picnic.enterprise.slack.com)** in je browser (Chrome, Edge of Brave) en log in.
+2. Druk op <kbd>F12</kbd> (of <kbd>Cmd+Option+I</kbd> op Mac) om de DevTools te openen.
+3. Ga naar het tabblad **Console** en typ:
+   ```javascript
+   console.log("TOKEN:", window.boot_data.api_token);
+   console.log("COOKIE:", document.cookie.match(/d=([^;]+)/)?.[1]);
+   ```
+4. Kopieer de `TOKEN` (begint met `xoxc-...`) en `COOKIE` (begint met `xoxd-...`).
+5. Plak deze in de mobiele app onder **Instellingen** en klik op **"Test Echte Slack Verbinding"**.
+6. Je ziet direct een groen vinkje met:
+   `✅ Verbonden met Picnic Slack als [Jouw Naam]! Kanaal #nl-dist-runners-hlm actief.`
+
