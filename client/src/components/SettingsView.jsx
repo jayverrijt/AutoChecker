@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Browser } from '@capacitor/browser';
+import { registerPlugin, Capacitor } from '@capacitor/core';
+
+const SlackAuth = registerPlugin('SlackAuth');
 import { 
   Key, 
   Hash, 
@@ -61,12 +64,53 @@ export const SettingsView = ({
 
   const handleOpenSlackLogin = async () => {
     const url = formData.workspaceUrl || 'https://picnic.enterprise.slack.com';
+    
+    if (Capacitor.isNativePlatform()) {
+      try {
+        setIsTesting(true);
+        setTestResult({
+          ok: true,
+          auth: { user: 'Inloggen in Slack... Log in met je account; de app koppelt de sessie direct.' }
+        });
+        
+        const res = await SlackAuth.login({ workspaceUrl: url });
+        if (res && res.token) {
+          const updated = {
+            ...formData,
+            slackToken: res.token,
+            slackCookie: res.cookie || formData.slackCookie
+          };
+          setFormData(updated);
+          await onSaveSettings(updated);
+          sounds.playSuccess();
+          setTestResult({
+            ok: true,
+            auth: { user: 'Sessie succesvol gekoppeld! Slack verbinding wordt gecontroleerd...' }
+          });
+          const testRes = await onTestConnection();
+          setTestResult(testRes);
+          return;
+        }
+      } catch (err) {
+        console.warn('SlackAuth login cancelled or error:', err);
+        const msg = typeof err === 'string' ? err : err?.message;
+        if (msg && msg.includes('geannuleerd')) {
+          setTestResult({ ok: false, error: 'Inloggen geannuleerd.' });
+          return;
+        }
+      } finally {
+        setIsTesting(false);
+      }
+    }
+
+    // Fallback for Web/Browser preview
     try {
       await Browser.open({ url });
     } catch (e) {
       window.open(url, '_blank');
     }
   };
+
 
   useEffect(() => {
     if (settings) {

@@ -11,8 +11,10 @@
     "start": "npm start --prefix server",
     "cap:sync": "cd client && npm run build && npx cap sync",
     "cap:ios": "cd client && npx cap open ios",
-    "cap:android": "cd client && npx cap open android"
+    "cap:android": "cd client && npx cap open android",
+    "cap:build:android": "cd client && npm run build && npx cap sync && cd android && JAVA_HOME=/Users/jayv/Library/Java/JavaVirtualMachines/temurin-21.0.12.1/Contents/Home ./gradlew assembleDebug"
   },
+
   "devDependencies": {
     "concurrently": "^9.1.2"
   }
