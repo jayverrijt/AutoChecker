@@ -115,12 +115,90 @@ export const SettingsView = ({
     }
   };
 
+  const [curlInput, setCurlInput] = useState('');
+
+  const handleParseCurl = (rawText) => {
+    if (!rawText || !rawText.trim()) return;
+
+    let updated = { ...formData };
+    let foundSomething = false;
+    
+    // Extract Token (xoxc-... or xoxp-...)
+    const tokenMatch = rawText.match(/(xoxc-[A-Za-z0-9-]+|xoxp-[A-Za-z0-9-]+)/);
+    if (tokenMatch) {
+      updated.slackToken = tokenMatch[1];
+      foundSomething = true;
+    }
+
+    // Extract Cookie d=...
+    const cookieMatch = rawText.match(/[;\s'"&]d=([xoxd-]*[A-Za-z0-9%_-]+)/);
+    if (cookieMatch) {
+      updated.slackCookie = cookieMatch[1];
+      foundSomething = true;
+    }
+
+    // Extract Channel ID (e.g. CAM2MJTA9)
+    const channelMatch = rawText.match(/(?:channel[=:]["']?|archives\/|channel%22%3A%22)([A-Z0-9]{9,12})/);
+    if (channelMatch) {
+      updated.channelId = channelMatch[1];
+      foundSomething = true;
+    }
+
+    // Extract Workspace URL
+    const wsMatch = rawText.match(/https:\/\/([a-zA-Z0-9.-]+\.slack\.com)/);
+    if (wsMatch) {
+      updated.workspaceUrl = `https://${wsMatch[1]}`;
+    }
+
+    if (foundSomething) {
+      setFormData(updated);
+      sounds.playSuccess();
+      setCurlInput('');
+      setTestResult({
+        ok: true,
+        auth: { user: `Gegevens succesvol geëxtraheerd! (Token: ${updated.slackToken?.slice(0, 10)}... / Cookie: ${updated.slackCookie?.slice(0, 8)}... / Kanaal: ${updated.channelId || 'onbekend'}). Klik nu op Testen!` }
+      });
+    } else {
+      setTestResult({
+        ok: false,
+        error: 'Geen Slack token of cookie gevonden in de geplakte tekst. Kopieer een verzoek met "Copy as cURL" vanuit het Network tabblad.'
+      });
+    }
+  };
+
   const copyConsoleSnippet = () => {
-    const code = `console.log("%c--- JOUW PICNIC SLACK CREDENTIALS ---", "color:#10b981;font-weight:bold;font-size:14px;");
-console.log("TOKEN (xoxc):", window.boot_data.api_token);
-console.log("COOKIE (d):", document.cookie.match(/d=([^;]+)/)?.[1]);
-copy("TOKEN: " + window.boot_data.api_token + "\\nCOOKIE: " + document.cookie.match(/d=([^;]+)/)?.[1]);
-alert("Token en Cookie gekopieerd naar klembord!");`;
+    const code = `(() => {
+  let token = null;
+  try {
+    const cfg = JSON.parse(localStorage.getItem('localConfig_v2') || '{}');
+    if (cfg.teams) {
+      const teamId = Object.keys(cfg.teams)[0];
+      token = cfg.teams[teamId]?.token;
+    }
+  } catch (e) {}
+
+  if (!token) {
+    for (let i = 0; i < localStorage.length; i++) {
+      const val = localStorage.getItem(localStorage.key(i));
+      const match = val && typeof val === 'string' && val.match(/xoxc-[A-Za-z0-9-]+/);
+      if (match) { token = match[0]; break; }
+    }
+  }
+
+  if (!token && window.TS?.boot_data?.api_token) {
+    token = window.TS.boot_data.api_token;
+  }
+
+  console.log("%c--- JOUW PICNIC SLACK CREDENTIALS ---", "color:#10b981;font-weight:bold;font-size:15px;");
+  if (token) {
+    console.log("%cTOKEN (xoxc):", "color:#3b82f6;font-weight:bold;", token);
+    copy(token);
+    alert("Token (xoxc) gevonden en gekopieerd naar je klembord!\\n\\nVoor de Cookie (d):\\nGa naar Storage/Application -> Cookies -> https://picnic.enterprise.slack.com -> zoek de cookie genaamd 'd'.");
+  } else {
+    console.warn("Token niet in localStorage. Gebruik de Network-tab methode (Copy as cURL op conversations.history)!");
+    alert("Gebruik de Network tab: klik met rechtermuisknop op conversations.history -> Copy as cURL!");
+  }
+})();`;
     
     navigator.clipboard.writeText(code);
     setCopiedSnippet(true);
@@ -206,6 +284,38 @@ alert("Token en Cookie gekopieerd naar klembord!");`;
           <div className="flex items-center gap-2">
             <Key className="w-4 h-4 text-blue-400" />
             <h3 className="text-sm font-bold text-white">Picnic Sessie &amp; Token</h3>
+          </div>
+
+          {/* Quick cURL importer */}
+          <div className="bg-[#141519] border border-[#2b2d39] rounded-xl p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <span>Snelle Import via Network Tab</span>
+                <span className="text-[10px] bg-emerald-600/30 text-emerald-300 font-semibold px-1.5 py-0.5 rounded">1-Click</span>
+              </span>
+            </div>
+            <p className="text-[11px] text-neutral-400 leading-relaxed">
+              Klik in DevTools ➜ <strong>Network</strong> met rechtermuisknop op <code>conversations.history</code> ➜ <strong>Copy as cURL</strong> en plak het hier:
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={curlInput}
+                onChange={(e) => {
+                  setCurlInput(e.target.value);
+                  handleParseCurl(e.target.value);
+                }}
+                placeholder="Plak hier gekopieerde cURL..."
+                className="w-full bg-[#1e2027] border border-[#353847] rounded-lg px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => handleParseCurl(curlInput)}
+                className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold shrink-0 transition-colors shadow"
+              >
+                Importeer
+              </button>
+            </div>
           </div>
 
           <div>
