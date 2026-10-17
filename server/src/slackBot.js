@@ -316,25 +316,52 @@ export class SlackBotManager {
     }
   }
 
+  isCriticalWindow() {
+    const now = new Date();
+    const h = now.getHours();
+    const m = now.getMinutes();
+    const s = now.getSeconds();
+
+    // 17:10 window (17:09:45 - 17:11:15) for morning shifts
+    if (h === 17 && (m === 10 || (m === 9 && s >= 45) || (m === 11 && s <= 15))) {
+      return { active: true, target: '17:10', period: 'OCHTEND' };
+    }
+    // 10:10 window (10:09:45 - 10:11:15) for afternoon shifts
+    if (h === 10 && (m === 10 || (m === 9 && s >= 45) || (m === 11 && s <= 15))) {
+      return { active: true, target: '10:10', period: 'MIDDAG' };
+    }
+    return { active: false };
+  }
+
   startPolling() {
     this.stopPolling();
+    this.isPolling = true;
     const settings = db.getSettings();
-    // Default 1000ms polling for race speed
-    const interval = Math.max(500, settings.pollIntervalMs || 1000);
+    this.log('info', `Lokale monitor actief voor #${settings.channelName} (Smart 17:10 & 10:10 luister-engine)`);
 
-    this.log('info', `Lokale monitor actief voor #${settings.channelName} (${interval}ms interval)`);
-    
-    this.pollTimer = setInterval(async () => {
+    const loop = async () => {
+      if (!this.isPolling) return;
+      const windowCheck = this.isCriticalWindow();
+      const delay = windowCheck.active ? 500 : Math.max(800, settings.pollIntervalMs || 1000);
+
       await this.pollChannelMessages();
-    }, interval);
+
+      if (this.isPolling) {
+        this.pollTimer = setTimeout(loop, delay);
+      }
+    };
+
+    this.pollTimer = setTimeout(loop, 200);
   }
 
   stopPolling() {
+    this.isPolling = false;
     if (this.pollTimer) {
-      clearInterval(this.pollTimer);
+      clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
   }
+
 
   async pollChannelMessages() {
     if (!this.resolvedChannelId || this.status !== 'polling') return;

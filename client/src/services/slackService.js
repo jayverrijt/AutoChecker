@@ -1,4 +1,5 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { isCriticalListeningWindow } from '../utils/constants';
 
 const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
@@ -11,7 +12,7 @@ export const DEFAULT_SETTINGS = {
   channelId: 'CAM2MJTA9',
   botSenderName: 'Day-Planning-Sender',
   autoReact: true,
-  pollIntervalMs: 1500,
+  pollIntervalMs: 1000,
   soundEnabled: true,
   emojiMapping: {
     M1: '1-red',
@@ -28,8 +29,9 @@ class SlackService {
     this.processedMessageIds = new Set();
     this.statusListeners = [];
     this.reactionListeners = [];
-    this.logListeners = [];
     this.cachedAuth = null;
+    this.recentMessages = [];
+    this.isPollingActive = false;
   }
 
   getCleanCookie(rawCookie) {
@@ -41,55 +43,6 @@ class SlackService {
       return `d=${val}`;
     }
     return val ? `d=${val}` : '';
-  }
-
-  async callSlackApi(endpoint, body = null, settings = null) {
-    const currentSettings = settings || this.getSettings();
-    const token = (currentSettings.slackToken || '').trim();
-    const cookie = this.getCleanCookie(currentSettings.slackCookie);
-
-    if (!token) {
-      throw new Error('Geen Slack token geconfigureerd');
-    }
-
-    const domain = (currentSettings.workspaceUrl || 'https://picnic.enterprise.slack.com')
-      .replace('enterprise.slack.com', 'slack.com')
-      .replace(/\/+$/, '');
-    
-    // In Enterprise Grid, API calls usually go to teampicnic.slack.com/api or picnic.enterprise.slack.com/api
-    const url = `https://teampicnic.slack.com/api/${endpoint}`;
-
-    const headers = {
-      'Authorization': `Bearer ${token}`,
-      'User-Agent': DESKTOP_UA,
-      'Accept': 'application/json'
-    };
-    if (cookie) {
-      headers['Cookie'] = cookie;
-    }
-
-    if (Capacitor.isNativePlatform()) {
-      // Use native CapacitorHttp on Android / iOS (bypasses CORS completely)
-      if (body) {
-        headers['Content-Type'] = 'application/json; charset=utf-8';
-        const res = await CapacitorHttp.post({
-          url,
-          headers,
-          data: body
-        });
-        return res.data;
-      } else {
-        const res = await CapacitorHttp.get({
-          url,
-          headers
-        });
-        return res.data;
-      }
-    } else {
-      // Running in Desktop web browser: call local backend proxy
-      const res = await fetch(`http://localhost:3001/api/test-connection`);
-      return res.json();
-    }
   }
 
   async testConnection(settings = null) {
@@ -149,6 +102,7 @@ class SlackService {
             channelOk = true;
             messages = histRes.data.messages || [];
             messageCount = messages.length;
+            this.recentMessages = messages;
           }
         } catch (e) {
           console.warn('Channel check warning:', e);
@@ -241,11 +195,133 @@ class SlackService {
         url: `https://teampicnic.slack.com/api/conversations.history?channel=${channelId}&limit=15`,
         headers
       });
-      return res.data?.ok ? res.data.messages : [];
+      const msgs = res.data?.ok ? res.data.messages : [];
+      this.recentMessages = msgs;
+      return msgs;
     } else {
       const res = await fetch('http://localhost:3001/api/recent-messages');
       const data = await res.json();
       return data?.messages || [];
+    }
+  }
+
+  // Real-time Standalone Background Poller with 17:10 & 10:10 Critical Window Boost
+  startPolling(onReactionCallback = null) {
+    this.stopPolling();
+    this.isPollingActive = true;
+    if (onReactionCallback) {
+      this.reactionListeners.push(onReactionCallback);
+    }
+
+    const pollLoop = async () => {
+      if (!this.isPollingActive) return;
+
+      const windowCheck = isCriticalListeningWindow();
+      // If in critical window (17:10 or 10:10): hyper-speed 500ms! Otherwise 1200ms
+      const pollDelay = windowCheck.active ? 500 : 1200;
+
+      try {
+        await this.checkAndReact();
+      } catch (err) {
+        console.warn('Polling check error:', err);
+      }
+
+      if (this.isPollingActive) {
+        this.pollTimer = setTimeout(pollLoop, pollDelay);
+      }
+    };
+
+    pollLoop();
+  }
+
+  stopPolling() {
+    this.isPollingActive = false;
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+    }
+  }
+
+  async checkAndReact() {
+    const settings = this.getSettings();
+    if (!settings.autoReact || !settings.slackToken) return;
+
+    const channelId = settings.channelId || 'CAM2MJTA9';
+    const messages = await this.fetchRecentMessages(channelId, settings);
+    if (!messages || messages.length === 0) return;
+
+    const shifts = this.getShifts();
+
+    for (const msg of messages) {
+      if (this.processedMessageIds.has(msg.ts)) continue;
+
+      const text = msg.text || '';
+      const isPlanner = text.includes('Graag voor') || 
+                        text.includes('Overschotten') || 
+                        text.includes('Check je vrij') || 
+                        (msg.username && msg.username.includes('Planning'));
+
+      if (!isPlanner) continue;
+
+      // Extract date & period
+      const dateMatch = text.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/);
+      let targetIsoDate = null;
+      if (dateMatch) {
+        let d = dateMatch[1].padStart(2, '0');
+        let m = dateMatch[2].padStart(2, '0');
+        let y = dateMatch[3].length === 2 ? '20' + dateMatch[3] : dateMatch[3];
+        targetIsoDate = `${y}-${m}-${d}`;
+      }
+
+      let period = null;
+      if (/OCHTEND/i.test(text)) period = 'OCHTEND';
+      else if (/MIDDAG/i.test(text)) period = 'MIDDAG';
+
+      if (!targetIsoDate && period === 'OCHTEND') {
+        // Morning release at 17:10 is for tomorrow
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        targetIsoDate = tomorrow.toISOString().split('T')[0];
+      } else if (!targetIsoDate && period === 'MIDDAG') {
+        // Afternoon release at 10:10 is for today
+        targetIsoDate = new Date().toISOString().split('T')[0];
+      }
+
+      if (targetIsoDate && shifts[targetIsoDate]) {
+        const userShift = shifts[targetIsoDate];
+        if (userShift.block !== 'none' && userShift.vrijcheckActive !== false && !userShift.reactionStatus?.success) {
+          const mapping = settings.emojiMapping || DEFAULT_SETTINGS.emojiMapping;
+          const emojiToReact = mapping[userShift.block] || '1-red';
+
+          const startTime = Date.now();
+          const reactRes = await this.addReaction(channelId, msg.ts, emojiToReact, settings);
+          const latencyMs = Date.now() - startTime;
+
+          if (reactRes?.ok || reactRes?.error === 'already_reacted') {
+            this.processedMessageIds.add(msg.ts);
+            userShift.reactionStatus = {
+              success: true,
+              emoji: emojiToReact,
+              latencyMs,
+              ts: Date.now()
+            };
+            shifts[targetIsoDate] = userShift;
+            this.saveShifts(shifts);
+
+            // Notify listeners
+            this.reactionListeners.forEach(cb => cb({
+              reactionSuccess: true,
+              emoji: emojiToReact,
+              latencyMs,
+              shift: userShift,
+              date: targetIsoDate
+            }));
+            return;
+          }
+        }
+      }
+
+      this.processedMessageIds.add(msg.ts);
     }
   }
 
@@ -265,7 +341,6 @@ class SlackService {
       localStorage.setItem('vrijcheck_settings', JSON.stringify(merged));
     } catch (e) {}
 
-    // Also try syncing to local backend server if reachable
     fetch('http://localhost:3001/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

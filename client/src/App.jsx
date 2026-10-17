@@ -43,10 +43,12 @@ export function App() {
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalDate, setModalDate] = useState(initialDate);
+  const [modalInitialBlock, setModalInitialBlock] = useState(null);
 
   const [toast, setToast] = useState(null);
   const [hasUnreadReaction, setHasUnreadReaction] = useState(false);
   const [isDeviceFrame, setIsDeviceFrame] = useState(true);
+
 
   // Initialize Socket.io & Local Standalone Services
   useEffect(() => {
@@ -206,10 +208,12 @@ export function App() {
     setSelectedDate(initialDate);
   };
 
-  const handleOpenShiftModal = (date) => {
+  const handleOpenShiftModal = (date, blockId = null) => {
     setModalDate(date);
+    setModalInitialBlock(blockId);
     setIsModalOpen(true);
   };
+
 
   const handleSaveShift = async (shiftData) => {
     const dateKey = format(modalDate, 'yyyy-MM-dd');
@@ -507,8 +511,10 @@ export function App() {
           onClose={() => setIsModalOpen(false)}
           date={modalDate}
           currentShift={shifts[format(modalDate, 'yyyy-MM-dd')]}
+          initialBlock={modalInitialBlock}
           onSaveShift={handleSaveShift}
         />
+
 
         {/* Bottom Navigation Bar */}
         <BottomNav
