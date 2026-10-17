@@ -1,0 +1,51 @@
+{
+  "2026-10-17": {
+    "block": "S3",
+    "startTime": "16:30",
+    "endTime": "23:00",
+    "vrijcheckActive": true,
+    "reactionStatus": {
+      "success": true,
+      "emoji": "3-red",
+      "timestamp": "2026-10-17T12:35:43.476Z",
+      "latencyMs": 220,
+      "messageTs": "1792240543.256000",
+      "period": "MIDDAG",
+      "error": null
+    }
+  },
+  "2026-10-18": {
+    "block": "M2",
+    "startTime": "07:00",
+    "endTime": "15:30",
+    "vrijcheckActive": true,
+    "reactionStatus": {
+      "success": true,
+      "emoji": "2-red",
+      "timestamp": "2026-10-17T12:35:43.752Z",
+      "latencyMs": 239,
+      "messageTs": "1792240543.512000",
+      "period": "OCHTEND",
+      "error": null
+    }
+  },
+  "2026-10-19": {
+    "block": "S2",
+    "startTime": "14:00",
+    "endTime": "22:30",
+    "vrijcheckActive": true,
+    "reactionStatus": null
+  },
+  "2026-10-20": {
+    "block": "none",
+    "vrijcheckActive": false,
+    "reactionStatus": null
+  },
+  "2026-10-21": {
+    "block": "S3",
+    "startTime": "16:30",
+    "endTime": "23:00",
+    "vrijcheckActive": true,
+    "reactionStatus": null
+  }
+}

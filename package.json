@@ -1,0 +1,16 @@
+{
+  "name": "vrijcheck-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Picnic Teamwork Vrijcheck App & Slack Bot for #nl-dist-runners-hlm",
+  "scripts": {
+    "server": "npm run dev --prefix server",
+    "client": "npm run dev --prefix client",
+    "dev": "concurrently -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"npm run server\" \"npm run client\"",
+    "build": "npm run build --prefix client",
+    "start": "npm start --prefix server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
