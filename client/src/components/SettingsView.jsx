@@ -68,11 +68,6 @@ export const SettingsView = ({
     if (Capacitor.isNativePlatform()) {
       try {
         setIsTesting(true);
-        setTestResult({
-          ok: true,
-          auth: { user: 'Inloggen in Slack... Log in met je account; de app koppelt de sessie direct.' }
-        });
-        
         const res = await SlackAuth.login({ workspaceUrl: url });
         if (res && res.token) {
           const updated = {
@@ -83,11 +78,9 @@ export const SettingsView = ({
           setFormData(updated);
           await onSaveSettings(updated);
           sounds.playSuccess();
-          setTestResult({
-            ok: true,
-            auth: { user: 'Sessie succesvol gekoppeld! Slack verbinding wordt gecontroleerd...' }
-          });
-          const testRes = await onTestConnection();
+          
+          // Test the real connection immediately with updated credentials
+          const testRes = await onTestConnection(updated);
           setTestResult(testRes);
           return;
         }
@@ -103,6 +96,7 @@ export const SettingsView = ({
       }
       return; // Never fall through to Browser.open on native devices
     }
+
 
     // Fallback for Desktop Web preview only
     try {

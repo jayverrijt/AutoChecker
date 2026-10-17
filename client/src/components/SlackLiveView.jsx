@@ -67,7 +67,7 @@ export const SlackLiveView = ({
     }
   };
 
-  const isRealSlackConnected = botStatus?.status === 'polling' && botStatus?.authInfo?.user;
+  const isRealSlackConnected = (botStatus?.status === 'polling' || botStatus?.status === 'connected') && Boolean(botStatus?.authInfo?.user);
 
   return (
     <div className="p-4 space-y-4 pb-24 overflow-y-auto">

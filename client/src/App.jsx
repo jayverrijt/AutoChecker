@@ -19,10 +19,12 @@ import { BottomNav } from './components/BottomNav';
 import { SlackEmoji } from './components/SlackEmoji';
 import { sounds } from './utils/audio';
 import { Smartphone, Monitor, CheckCircle2, Zap } from 'lucide-react';
+import { slackService } from './services/slackService';
 
 const SOCKET_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3001'
   : '/';
+
 
 export function App() {
   const [socket, setSocket] = useState(null);
@@ -46,102 +48,145 @@ export function App() {
   const [hasUnreadReaction, setHasUnreadReaction] = useState(false);
   const [isDeviceFrame, setIsDeviceFrame] = useState(true);
 
-  // Initialize Socket.io
+  // Initialize Socket.io & Local Standalone Services
   useEffect(() => {
-    const s = io(SOCKET_URL, {
-      transports: ['websocket', 'polling']
-    });
+    // 1. Instantly populate from local storage so native app has data immediately
+    const initialShifts = slackService.getShifts();
+    const initialSettings = slackService.getSettings();
+    setShifts(initialShifts);
+    setSettings(initialSettings);
+    if (initialSettings.soundEnabled !== undefined) {
+      sounds.enabled = initialSettings.soundEnabled;
+    }
 
-    s.on('connect', () => {
-      console.log('Connected to Vrijcheck backend');
-    });
+    // 2. Perform connection test on launch to populate botStatus & runner username
+    slackService.testConnection(initialSettings).then((res) => {
+      if (res?.ok && res?.auth) {
+        setBotStatus({
+          status: 'connected',
+          authInfo: res.auth,
+          channelName: initialSettings.channelName,
+          channelId: initialSettings.channelId
+        });
+        if (res.recentMessages && res.recentMessages.length > 0) {
+          setRecentMessages(res.recentMessages);
+        }
+      }
+    }).catch(console.warn);
 
-    s.on('shifts:updated', (data) => {
-      setShifts(data);
-    });
-
-    s.on('settings:updated', (data) => {
-      setSettings(data);
-      if (data.soundEnabled !== undefined) {
-        sounds.enabled = data.soundEnabled;
+    // 3. Listen to local status updates
+    const unsub = slackService.onStatusChange((st) => {
+      if (st?.authInfo) {
+        setBotStatus((prev) => ({ ...prev, ...st }));
       }
     });
 
-    s.on('bot:status', (data) => {
-      setBotStatus(data);
-    });
+    // 4. Connect to Socket.io backend if running
+    let s = null;
+    try {
+      s = io(SOCKET_URL, {
+        transports: ['websocket', 'polling'],
+        timeout: 4000
+      });
 
-    s.on('bot:recent_messages', (data) => {
-      setRecentMessages(data);
-    });
+      s.on('connect', () => {
+        console.log('Connected to Vrijcheck backend');
+      });
 
-    s.on('history:updated', (data) => {
-      setHistory(data);
-    });
+      s.on('shifts:updated', (data) => {
+        setShifts(data);
+        slackService.saveShifts(data);
+      });
 
-    s.on('bot:reaction_event', (event) => {
-      // Trigger celebration if reaction succeeded
-      if (event.reactionSuccess) {
-        sounds.playSuccess();
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 }
-        });
-
-        setToast({
-          type: 'success',
-          title: '🎉 Vrijcheck Geslaagd!',
-          message: `Gereageerd met :${event.emoji}: (${event.latencyMs || 0}ms)`,
-          emoji: event.emoji
-        });
-
-        setHasUnreadReaction(true);
-      } else if (event.status === 'period_mismatch' || event.status === 'no_shift') {
-        setToast({
-          type: 'info',
-          title: 'Bericht Ontvangen',
-          message: event.reason || 'Geen actie vereist voor deze shift.'
-        });
-      } else {
-        setToast({
-          type: 'error',
-          title: 'Vrijcheck Mislukt',
-          message: event.details || event.reason || 'Onbekende fout'
-        });
-      }
-
-      setTimeout(() => setToast(null), 5000);
-    });
-
-    setSocket(s);
-
-    // Initial fetch fallback
-    fetch(`${SOCKET_URL}/api/shifts`)
-      .then((r) => r.json())
-      .then(setShifts)
-      .catch(console.error);
-
-    fetch(`${SOCKET_URL}/api/settings`)
-      .then((r) => r.json())
-      .then((data) => {
+      s.on('settings:updated', (data) => {
         setSettings(data);
-        if (data.soundEnabled !== undefined) sounds.enabled = data.soundEnabled;
-      })
-      .catch(console.error);
+        slackService.saveSettings(data);
+        if (data.soundEnabled !== undefined) {
+          sounds.enabled = data.soundEnabled;
+        }
+      });
 
-    fetch(`${SOCKET_URL}/api/status`)
-      .then((r) => r.json())
-      .then(setBotStatus)
-      .catch(console.error);
+      s.on('bot:status', (data) => {
+        setBotStatus(data);
+      });
 
-    fetch(`${SOCKET_URL}/api/history`)
-      .then((r) => r.json())
-      .then(setHistory)
-      .catch(console.error);
+      s.on('bot:recent_messages', (data) => {
+        setRecentMessages(data);
+      });
 
-    return () => s.disconnect();
+      s.on('history:updated', (data) => {
+        setHistory(data);
+      });
+
+      s.on('bot:reaction_event', (event) => {
+        if (event.reactionSuccess) {
+          sounds.playSuccess();
+          confetti({
+            particleCount: 80,
+            spread: 70,
+            origin: { y: 0.6 }
+          });
+
+          setToast({
+            type: 'success',
+            title: '🎉 Vrijcheck Geslaagd!',
+            message: `Gereageerd met :${event.emoji}: (${event.latencyMs || 0}ms)`,
+            emoji: event.emoji
+          });
+
+          setHasUnreadReaction(true);
+        } else if (event.status === 'period_mismatch' || event.status === 'no_shift') {
+          setToast({
+            type: 'info',
+            title: 'Bericht Ontvangen',
+            message: event.reason || 'Geen actie vereist voor deze shift.'
+          });
+        } else {
+          setToast({
+            type: 'error',
+            title: 'Vrijcheck Mislukt',
+            message: event.details || event.reason || 'Onbekende fout'
+          });
+        }
+
+        setTimeout(() => setToast(null), 5000);
+      });
+
+      setSocket(s);
+
+      // Initial fetch fallback
+      fetch(`${SOCKET_URL}/api/shifts`)
+        .then((r) => r.json())
+        .then(setShifts)
+        .catch(() => {});
+
+      fetch(`${SOCKET_URL}/api/settings`)
+        .then((r) => r.json())
+        .then((data) => {
+          setSettings(data);
+          if (data.soundEnabled !== undefined) sounds.enabled = data.soundEnabled;
+        })
+        .catch(() => {});
+
+      fetch(`${SOCKET_URL}/api/status`)
+        .then((r) => r.json())
+        .then(setBotStatus)
+        .catch(() => {});
+
+      fetch(`${SOCKET_URL}/api/history`)
+        .then((r) => r.json())
+        .then(setHistory)
+        .catch(() => {});
+    } catch (e) {
+      console.warn('Socket init warning:', e);
+    }
+
+    return () => {
+      unsub();
+      if (s) s.disconnect();
+    };
   }, []);
+
 
   // Compute 7 days of the currently viewed week (starts Monday)
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
@@ -168,17 +213,20 @@ export function App() {
 
   const handleSaveShift = async (shiftData) => {
     const dateKey = format(modalDate, 'yyyy-MM-dd');
+    const updated = {
+      ...shifts,
+      [dateKey]: shiftData
+    };
+    setShifts(updated);
+    slackService.saveShifts(updated);
+
     try {
-      const res = await fetch(`${SOCKET_URL}/api/shifts`, {
+      await fetch(`${SOCKET_URL}/api/shifts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dateKey, shift: shiftData })
       });
-      const updated = await res.json();
-      setShifts(updated);
-    } catch (err) {
-      console.error('Error saving shift:', err);
-    }
+    } catch (err) {}
   };
 
   const handleQuickToggleVrijcheck = async (dateKey) => {
@@ -190,17 +238,20 @@ export function App() {
       vrijcheckActive: existing.vrijcheckActive === false ? true : false
     };
 
+    const updated = {
+      ...shifts,
+      [dateKey]: updatedShift
+    };
+    setShifts(updated);
+    slackService.saveShifts(updated);
+
     try {
-      const res = await fetch(`${SOCKET_URL}/api/shifts`, {
+      await fetch(`${SOCKET_URL}/api/shifts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dateKey, shift: updatedShift })
       });
-      const updated = await res.json();
-      setShifts(updated);
-    } catch (err) {
-      console.error('Error toggling vrijcheck:', err);
-    }
+    } catch (err) {}
   };
 
   const handleSimulate = async (simPayload) => {
@@ -226,6 +277,9 @@ export function App() {
   };
 
   const handleSaveSettings = async (newSettings) => {
+    const merged = slackService.saveSettings(newSettings);
+    setSettings(merged);
+
     try {
       const res = await fetch(`${SOCKET_URL}/api/settings`, {
         method: 'POST',
@@ -233,35 +287,75 @@ export function App() {
         body: JSON.stringify(newSettings)
       });
       const updated = await res.json();
-      setSettings(updated);
-    } catch (err) {
-      console.error('Error saving settings:', err);
-    }
+      if (updated) setSettings(updated);
+    } catch (err) {}
   };
 
   const handleReconnect = async () => {
     try {
-      const res = await fetch(`${SOCKET_URL}/api/bot/reconnect`, { method: 'POST' });
-      const status = await res.json();
-      setBotStatus(status);
+      const res = await slackService.testConnection(settings);
+      if (res?.ok && res?.auth) {
+        setBotStatus((prev) => ({ ...prev, status: 'connected', authInfo: res.auth }));
+      }
     } catch (err) {
       console.error('Error reconnecting bot:', err);
     }
   };
 
-  const handleTestConnection = async () => {
-    const res = await fetch(`${SOCKET_URL}/api/bot/test-connection`, { method: 'POST' });
-    return await res.json();
+  const handleTestConnection = async (customSettings = null) => {
+    const targetSettings = customSettings || settings || slackService.getSettings();
+    const res = await slackService.testConnection(targetSettings);
+    if (res?.ok && res?.auth) {
+      setBotStatus((prev) => ({
+        ...prev,
+        status: 'connected',
+        authInfo: res.auth,
+        channelName: targetSettings.channelName,
+        channelId: targetSettings.channelId
+      }));
+      if (res.recentMessages && res.recentMessages.length > 0) {
+        setRecentMessages(res.recentMessages);
+      }
+    }
+    return res;
   };
 
   const handleTestRealReaction = async (emoji = '3-red') => {
-    const res = await fetch(`${SOCKET_URL}/api/bot/test-reaction`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emoji })
-    });
-    return await res.json();
+    const currentSettings = settings || slackService.getSettings();
+    const channelId = currentSettings?.channelId || 'CAM2MJTA9';
+    const ts = recentMessages?.[0]?.ts || '1792224619.377119';
+    try {
+      const res = await slackService.addReaction(channelId, ts, emoji, currentSettings);
+      if (res?.ok || res?.error === 'already_reacted') {
+        sounds.playSuccess();
+        confetti({ particleCount: 60, spread: 60 });
+        setToast({
+          type: 'success',
+          title: 'Reactie Geplaatst!',
+          message: `Succesvol gereageerd met :${emoji}: in #${currentSettings?.channelName || 'nl-dist-runners-hlm'}!`,
+          emoji
+        });
+        setTimeout(() => setToast(null), 4000);
+      } else {
+        setToast({
+          type: 'error',
+          title: 'Reactie Mislukt',
+          message: res?.error || 'Kon reactie niet plaatsen op Slack'
+        });
+        setTimeout(() => setToast(null), 4000);
+      }
+      return res;
+    } catch (err) {
+      setToast({
+        type: 'error',
+        title: 'Reactie Fout',
+        message: err.message
+      });
+      setTimeout(() => setToast(null), 4000);
+      return { ok: false, error: err.message };
+    }
   };
+
 
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-neutral-100 flex flex-col items-center justify-center p-0 md:p-6 select-none font-sans">
