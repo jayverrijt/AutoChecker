@@ -101,15 +101,17 @@ export const SettingsView = ({
       } finally {
         setIsTesting(false);
       }
+      return; // Never fall through to Browser.open on native devices
     }
 
-    // Fallback for Web/Browser preview
+    // Fallback for Desktop Web preview only
     try {
       await Browser.open({ url });
     } catch (e) {
       window.open(url, '_blank');
     }
   };
+
 
 
   useEffect(() => {
