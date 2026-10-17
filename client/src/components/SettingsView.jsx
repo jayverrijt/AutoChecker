@@ -67,9 +67,13 @@ export const SettingsView = ({
   }, [settings]);
 
   const handleChange = (field, value) => {
+    let cleanVal = value;
+    if (field === 'slackCookie' || field === 'slackToken') {
+      cleanVal = cleanVal.trim().replace(/^["']|["']$/g, '');
+    }
     setFormData((prev) => ({
       ...prev,
-      [field]: value
+      [field]: cleanVal
     }));
   };
 

@@ -70,19 +70,31 @@ export class SlackBotManager {
       throw new Error('Geen Slack token geconfigureerd');
     }
 
+    // Check if user has xoxc token without d cookie
+    if (token.startsWith('xoxc-') && (!settings.slackCookie || !settings.slackCookie.trim())) {
+      this.log('warning', 'Een xoxc- token vereist altijd de bijbehorende "d" (xoxd-...) sessiecookie op Enterprise Slack.');
+      return {
+        ok: false,
+        error: 'invalid_auth: Je hebt een xoxc- token ingevuld, maar de Session Cookie "d" (xoxd-...) ontbreekt nog. Vul deze in of gebruik de "Copy as cURL" knop!'
+      };
+    }
+
     const baseUrl = this.getApiBaseUrl();
     const url = `${baseUrl}/${endpoint}`;
 
     const headers = {
       'Authorization': `Bearer ${token}`,
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      'Accept': 'application/json, text/plain, */*'
+      'Accept': '*/*'
     };
 
     // Attach d cookie for Enterprise Grid xoxc session if present
     if (settings.slackCookie && settings.slackCookie.trim()) {
       let cookieVal = settings.slackCookie.trim();
-      if (!cookieVal.startsWith('d=')) {
+      // Strip leading d: or d= or d:" or quotes
+      cookieVal = cookieVal.replace(/^d\s*[:=]\s*["']?/, '');
+      cookieVal = cookieVal.replace(/["';\s]+$/, '');
+      if (cookieVal.startsWith('xoxd-')) {
         cookieVal = `d=${cookieVal}`;
       }
       headers['Cookie'] = cookieVal;
@@ -93,9 +105,18 @@ export class SlackBotManager {
       headers
     };
 
-    if (body) {
-      headers['Content-Type'] = 'application/json; charset=utf-8';
-      options.body = JSON.stringify(body);
+    if (method === 'POST') {
+      const formParams = new URLSearchParams();
+      formParams.append('token', token);
+      if (body) {
+        for (const [k, v] of Object.entries(body)) {
+          if (v !== undefined && v !== null) {
+            formParams.append(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+          }
+        }
+      }
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      options.body = formParams.toString();
     }
 
     try {
