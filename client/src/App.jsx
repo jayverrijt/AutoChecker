@@ -254,6 +254,15 @@ export function App() {
     return await res.json();
   };
 
+  const handleTestRealReaction = async (emoji = '3-red') => {
+    const res = await fetch(`${SOCKET_URL}/api/bot/test-reaction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emoji })
+    });
+    return await res.json();
+  };
+
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-neutral-100 flex flex-col items-center justify-center p-0 md:p-6 select-none font-sans">
       {/* Desktop Top Toolbar (Frame Toggle & Info) */}
@@ -377,6 +386,7 @@ export function App() {
               onClearHistory={handleClearHistory}
               onReconnect={handleReconnect}
               onNavigateToSettings={() => setActiveTab('settings')}
+              onTestRealReaction={handleTestRealReaction}
               shifts={shifts}
             />
           </div>

@@ -28,15 +28,27 @@ export const SlackLiveView = ({
   onSimulate,
   onClearHistory,
   onReconnect,
-  onNavigateToSettings
+  onNavigateToSettings,
+  onTestRealReaction
 }) => {
   const [selectedPeriod, setSelectedPeriod] = useState('MIDDAG');
   const [simDate, setSimDate] = useState('17-10-2026');
   const [isSimulating, setIsSimulating] = useState(false);
+  const [isTestingReal, setIsTestingReal] = useState(false);
   const [overschot1, setOverschot1] = useState(3);
   const [overschot2, setOverschot2] = useState(4);
   const [overschot3, setOverschot3] = useState(2);
   const [showSimulator, setShowSimulator] = useState(false);
+
+  const handleTriggerRealReaction = async (emoji) => {
+    if (!onTestRealReaction) return;
+    setIsTestingReal(true);
+    try {
+      await onTestRealReaction(emoji);
+    } finally {
+      setIsTestingReal(false);
+    }
+  };
 
   const handleSimulateClick = async () => {
     setIsSimulating(true);
@@ -139,6 +151,53 @@ export const SlackLiveView = ({
           </div>
         )}
       </div>
+
+      {/* Direct Live Reaction Test on Slack */}
+      {isRealSlackConnected && (
+        <div className="bg-[#1a1b20] border border-amber-500/30 rounded-2xl p-4 space-y-3 shadow-md">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-400 fill-amber-400" />
+              <h3 className="text-sm font-bold text-white">Test Live Reactie op Slack</h3>
+            </div>
+            <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded font-bold">
+              Echte Slack Test
+            </span>
+          </div>
+
+          <p className="text-xs text-neutral-300 leading-relaxed">
+            Klik op een emoji hieronder om direct een reactie te plaatsen op het recentste bericht in <strong className="text-white font-mono">#{botStatus?.channelName || 'nl-dist-runners-hlm'}</strong>:
+          </p>
+
+          <div className="grid grid-cols-3 gap-2 pt-1">
+            {[
+              { id: '1-red', label: ':1-red:', shift: 'M1 / S1' },
+              { id: '2-red', label: ':2-red:', shift: 'M2 / S2' },
+              { id: '3-red', label: ':3-red:', shift: 'S3' },
+            ].map(({ id, label, shift }) => (
+              <button
+                key={id}
+                onClick={() => handleTriggerRealReaction(id)}
+                disabled={isTestingReal}
+                className="py-3 px-2 rounded-xl bg-[#22242c] hover:bg-blue-600/30 active:scale-95 border border-[#303342] hover:border-blue-500/60 flex flex-col items-center justify-center gap-1.5 transition-all shadow group disabled:opacity-50"
+              >
+                <div className="p-1 rounded bg-black/40 group-hover:scale-110 transition-transform">
+                  <SlackEmoji name={id} size="md" />
+                </div>
+                <div className="text-center">
+                  <div className="text-xs font-bold text-white group-hover:text-blue-300">{label}</div>
+                  <div className="text-[10px] text-neutral-400">{shift}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+          {isTestingReal && (
+            <div className="text-center text-xs text-amber-300 animate-pulse font-medium pt-1">
+              Bezig met plaatsen op Slack...
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Live Channel Feed from #nl-dist-runners-hlm if available */}
       {recentMessages && recentMessages.length > 0 && (

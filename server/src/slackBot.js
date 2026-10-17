@@ -283,6 +283,13 @@ export class SlackBotManager {
       return;
     }
 
+    // Known HLM channel fallback
+    if ((settings.channelName || '').toLowerCase().includes('hlm')) {
+      this.resolvedChannelId = 'CAM2MJTA9';
+      db.saveSettings({ channelId: 'CAM2MJTA9' });
+      return;
+    }
+
     // 3. Try searching by channel name in conversations.list
     try {
       const channelNameClean = (settings.channelName || 'nl-dist-runners-hlm').replace(/^#/, '');
@@ -638,4 +645,112 @@ Nog vragen? Check de bookmarks in dit kanaal en/of de RunnerWiki @channel`,
     this.log('info', `[SIMULATIE] Bericht van Day-Planning-Sender (${period} ${date})`);
     return await this.processMessage(fakeMessage, true);
   }
+
+  /**
+   * Directly test placing a real Slack reaction on the latest message in #nl-dist-runners-hlm
+   */
+  async testRealReactionOnSlack({ emoji = '3-red' } = {}) {
+    const settings = db.getSettings();
+    if (!this.resolvedChannelId) {
+      await this.resolveChannel(settings);
+    }
+
+    if (!this.resolvedChannelId) {
+      throw new Error('Geen geldig kanaal ID gevonden voor ' + settings.channelName);
+    }
+
+    // 1. Fetch latest messages from the channel
+    const res = await this.callSlackApi(
+      `conversations.history?channel=${this.resolvedChannelId}&limit=10`,
+      null,
+      'GET'
+    );
+
+    if (!res.ok || !res.messages || res.messages.length === 0) {
+      throw new Error('Kon geen berichten ophalen uit kanaal om op te reageren: ' + (res.error || 'onbekend'));
+    }
+
+    // Find the latest message from Day-Planning-Sender or simply the newest message
+    const targetMsg = res.messages.find(m => 
+      (m.text && (m.text.includes('MIDDAG') || m.text.includes('OCHTEND') || m.text.includes('Planning') || m.text.includes('HLM'))) ||
+      (m.username && m.username.includes('Planning'))
+    ) || res.messages[0];
+
+    const timestamp = targetMsg.ts;
+    this.log('info', `[LIVE TEST OP SLACK] Reageren met :${emoji}: op bericht (${timestamp})...`);
+
+    const startTime = Date.now();
+
+    // Place reaction (if already reacted, remove first so user sees it trigger live!)
+    const addRes = await this.callSlackApi('reactions.add', {
+      channel: this.resolvedChannelId,
+      timestamp,
+      name: emoji
+    });
+
+    if (!addRes.ok && addRes.error === 'already_reacted') {
+      this.log('info', `[LIVE TEST OP SLACK] Was al gereageerd met :${emoji}:. Reactie wordt hernieuwd...`);
+      await this.callSlackApi('reactions.remove', {
+        channel: this.resolvedChannelId,
+        timestamp,
+        name: emoji
+      });
+      await new Promise(r => setTimeout(r, 400));
+      await this.callSlackApi('reactions.add', {
+        channel: this.resolvedChannelId,
+        timestamp,
+        name: emoji
+      });
+    } else if (!addRes.ok) {
+      throw new Error(`Slack API fout bij toevoegen reactie :${emoji}:: ${addRes.error}`);
+    }
+
+    const latencyMs = Date.now() - startTime;
+    this.log('success', `[LIVE TEST OP SLACK] Gelukt! Echte reactie :${emoji}: live geplaatst op Slack! (${latencyMs}ms)`);
+
+    // Update today's shift status in UI
+    const todayIso = '2026-10-17';
+    const reactionStatus = {
+      success: true,
+      emoji,
+      timestamp: new Date().toISOString(),
+      latencyMs,
+      messageTs: timestamp,
+      period: 'MIDDAG',
+      isLiveTest: true
+    };
+
+    const updatedShifts = db.updateShift(todayIso, {
+      reactionStatus
+    });
+
+    const historyItem = {
+      messageTs: timestamp,
+      messageDate: todayIso,
+      period: 'MIDDAG',
+      matchedShift: 'S3',
+      emoji,
+      reactionSuccess: true,
+      latencyMs,
+      status: 'success',
+      details: `Live test op Slack: gereageerd met :${emoji}: op bericht in #${settings.channelName} (${latencyMs}ms)`,
+      isSimulation: false,
+      isLiveTest: true
+    };
+    db.addHistoryItem(historyItem);
+
+    if (this.io) {
+      this.io.emit('bot:reaction_event', historyItem);
+      this.io.emit('shifts:updated', updatedShifts);
+    }
+
+    return {
+      ok: true,
+      emoji,
+      timestamp,
+      latencyMs,
+      messageSnippet: targetMsg.text?.slice(0, 80)
+    };
+  }
 }
+

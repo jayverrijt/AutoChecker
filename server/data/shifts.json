@@ -3,22 +3,22 @@
     "block": "S3",
     "startTime": "16:30",
     "endTime": "23:00",
-    "vrijcheckActive": true,
+    "vrijcheckActive": false,
     "reactionStatus": {
       "success": true,
       "emoji": "3-red",
-      "timestamp": "2026-10-17T13:55:45.530Z",
-      "latencyMs": 330,
+      "timestamp": "2026-10-17T14:00:37.458Z",
+      "latencyMs": 275,
       "messageTs": "1792224619.377119",
       "period": "MIDDAG",
-      "error": null
+      "isLiveTest": true
     }
   },
   "2026-10-18": {
     "block": "M2",
     "startTime": "07:00",
     "endTime": "15:30",
-    "vrijcheckActive": true,
+    "vrijcheckActive": false,
     "reactionStatus": {
       "success": true,
       "emoji": "2-red",

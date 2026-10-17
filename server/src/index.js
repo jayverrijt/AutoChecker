@@ -116,6 +116,16 @@ app.post('/api/bot/test-connection', async (req, res) => {
   res.json(result);
 });
 
+app.post('/api/bot/test-reaction', async (req, res) => {
+  const { emoji = '3-red' } = req.body || {};
+  try {
+    const result = await botManager.testRealReactionOnSlack({ emoji });
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // 4. Reaction History
 app.get('/api/history', (req, res) => {
   res.json(db.getHistory());
