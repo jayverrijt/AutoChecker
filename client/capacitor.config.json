@@ -1,0 +1,10 @@
+{
+  "appId": "nl.picnic.vrijcheck",
+  "appName": "Teamwork Vrijcheck",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}
