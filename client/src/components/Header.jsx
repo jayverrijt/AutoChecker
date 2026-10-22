@@ -1,7 +1,17 @@
 import React from 'react';
-import { ChevronDown, Calendar, RotateCcw } from 'lucide-react';
+import { ChevronDown, Calendar, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { format, startOfWeek, endOfWeek, addWeeks, subWeeks, isSameWeek } from 'date-fns';
 import { nl } from 'date-fns/locale';
+
+function formatCapitalizedWeekRange(ws, we) {
+  const startDay = format(ws, 'd');
+  const startMonth = format(ws, 'MMM', { locale: nl }).replace('.', '');
+  const endDay = format(we, 'd');
+  const endMonth = format(we, 'MMM', { locale: nl }).replace('.', '');
+
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  return `${startDay} ${cap(startMonth)} - ${endDay} ${cap(endMonth)}`;
+}
 
 export const Header = ({
   currentDate,
@@ -13,10 +23,10 @@ export const Header = ({
   onRefresh,
   isRefreshing = false,
   weekNumber,
-  isLiveBotActive,
-  isServerConnected = false
+  totalHours = '26.97',
+  isLiveBotActive
 }) => {
-  // Format Month Year (e.g. "November 2026")
+  // Format Month Year (e.g. "Oktober 2026")
   const monthYearString = format(currentDate, 'MMMM yyyy', { locale: nl });
   const capitalizedMonthYear = monthYearString.charAt(0).toUpperCase() + monthYearString.slice(1);
 
@@ -28,11 +38,7 @@ export const Header = ({
     const ws = addWeeks(currentWeekStart, offset);
     const we = endOfWeek(ws, { weekStartsOn: 1 });
     const isCurrent = offset === 0;
-
-    // Label e.g. "12 Okt - 18 Okt"
-    const startStr = format(ws, 'd MMM', { locale: nl }).replace('.', '');
-    const endStr = format(we, 'd MMM', { locale: nl }).replace('.', '');
-    const label = `${startStr} - ${endStr}`;
+    const label = formatCapitalizedWeekRange(ws, we);
 
     return {
       offset,
@@ -43,7 +49,7 @@ export const Header = ({
   });
 
   return (
-    <header className="pt-3.5 sm:pt-4 pb-0 bg-[#0e0f12] select-none sticky top-0 z-20 backdrop-blur-md">
+    <header className="pt-2 sm:pt-3 pb-0 bg-[#0e0f12] select-none sticky top-0 z-20 backdrop-blur-md">
       {/* Top row: Month Dropdown & Header Action Icons (Matches Teamwork screenshot exactly) */}
       <div className="flex items-center justify-between px-4 pb-2">
         {/* Month Dropdown -> Opens DatePickerModal */}
@@ -58,29 +64,26 @@ export const Header = ({
           <ChevronDown className="w-5 h-5 text-neutral-400 stroke-[2.5]" />
         </div>
 
-        {/* Right Action Icons: Calendar (jump to today) & Refresh */}
-        <div className="flex items-center gap-2.5 text-neutral-300">
-          {/* 24/7 Cloud status badge */}
-          {isServerConnected ? (
-            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span>24/7 Server</span>
-            </span>
-          ) : (
-            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-800/80 border border-neutral-700/60 text-neutral-400 text-[10px] font-medium">
-              <span>Lokaal</span>
-            </span>
-          )}
-
+        {/* Right Action Icons matching Teamwork: Calendar (today), Filter, Refresh */}
+        <div className="flex items-center gap-3.5 text-neutral-300">
           {/* Calendar jump to today */}
           <button
             type="button"
             onClick={onGoToToday}
-            className="p-1.5 hover:text-white transition-colors relative active:scale-90"
+            className="p-1 hover:text-white transition-colors relative active:scale-90"
             title="Naar vandaag"
           >
             <Calendar className="w-5 h-5 stroke-[2]" />
-            <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+            <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+          </button>
+
+          {/* Filter options */}
+          <button
+            type="button"
+            className="p-1 hover:text-white transition-colors active:scale-90"
+            title="Filter opties"
+          >
+            <SlidersHorizontal className="w-5 h-5 stroke-[2]" />
           </button>
 
           {/* Refresh icon */}
@@ -88,10 +91,10 @@ export const Header = ({
             type="button"
             onClick={onRefresh}
             disabled={isRefreshing}
-            className={`p-1.5 hover:text-white transition-colors active:scale-90 ${
+            className={`p-1 hover:text-white transition-colors active:scale-90 ${
               isRefreshing ? 'animate-spin text-blue-400' : ''
             }`}
-            title="Ververs Slack & Rooster"
+            title="Ververs Rooster"
           >
             <RotateCcw className="w-5 h-5 stroke-[2]" />
           </button>
@@ -118,8 +121,18 @@ export const Header = ({
         ))}
       </div>
 
-      {/* Horizontal divider line running across under week tabs */}
+      {/* Divider line under tabs */}
       <div className="border-b border-[#22242f] w-full" />
+
+      {/* Teamwork Subheader: Week number & Scheduled hours */}
+      <div className="flex items-center justify-between px-4 py-2 bg-[#121316] border-b border-[#22242f]">
+        <span className="text-sm font-bold text-white tracking-tight">
+          Week {weekNumber || '43'}
+        </span>
+        <span className="text-xs text-neutral-400 font-medium">
+          Ingeroosterd: <strong className="text-white font-bold">{totalHours}u</strong>
+        </span>
+      </div>
     </header>
   );
 };

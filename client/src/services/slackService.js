@@ -1,6 +1,6 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { isCriticalListeningWindow } from '../utils/constants';
-import { getShiftForBlock, saveShiftBlock } from '../utils/shiftHelpers';
+import { getShiftForBlock, saveShiftBlock, DEFAULT_SCHEDULE } from '../utils/shiftHelpers';
 
 const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
@@ -26,7 +26,7 @@ export const DEFAULT_SETTINGS = {
   }
 };
 
-export const DEFAULT_SHIFTS = {};
+export const DEFAULT_SHIFTS = DEFAULT_SCHEDULE;
 
 class SlackService {
   constructor() {
@@ -72,9 +72,11 @@ class SlackService {
 
         // 1. Test Auth
         const authRes = await CapacitorHttp.post({
-          url: 'https://teampicnic.slack.com/api/auth.test',
+          url: 'https://slack.com/api/auth.test',
           headers,
-          data: {}
+          data: {},
+          connectTimeout: 4000,
+          readTimeout: 4000
         });
 
         const authData = authRes.data;
@@ -100,8 +102,10 @@ class SlackService {
 
         try {
           const histRes = await CapacitorHttp.get({
-            url: `https://teampicnic.slack.com/api/conversations.history?channel=${channelId}&limit=10`,
-            headers
+            url: `https://slack.com/api/conversations.history?channel=${channelId}&limit=10`,
+            headers,
+            connectTimeout: 4000,
+            readTimeout: 4000
           });
           if (histRes.data?.ok) {
             channelOk = true;
@@ -145,6 +149,33 @@ class SlackService {
 
   async addReaction(channelId, messageTs, emoji, settings = null) {
     const currentSettings = settings || this.getSettings();
+    const serverUrl = (currentSettings?.serverUrl || '').trim();
+    const serverToken = currentSettings?.serverToken || 'vrijcheck_secret_2026';
+    const cleanEmoji = emoji.replace(/^:+|:+$/g, '');
+
+    // 1. If 24/7 VPS server is configured, try server first (fast, sub-second reaction)
+    if (serverUrl && !serverUrl.includes('localhost:3001')) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+        const res = await fetch(`${serverUrl.replace(/\/+$/, '')}/api/bot/test-reaction`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': serverToken
+          },
+          body: JSON.stringify({ emoji: cleanEmoji }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        const data = await res.json();
+        if (data?.ok) return { ok: true, emoji: cleanEmoji };
+      } catch (err) {
+        console.warn('VPS server test-reaction failed, falling back to direct Slack:', err.message);
+      }
+    }
+
+    // 2. Direct Slack API (using https://slack.com/api/reactions.add with timeout)
     const token = (currentSettings.slackToken || '').trim();
     const cookie = this.getCleanCookie(currentSettings.slackCookie);
 
@@ -157,19 +188,23 @@ class SlackService {
       headers['Cookie'] = cookie;
     }
 
-    const cleanEmoji = emoji.replace(/^:+|:+$/g, '');
-
     if (Capacitor.isNativePlatform()) {
-      const res = await CapacitorHttp.post({
-        url: 'https://teampicnic.slack.com/api/reactions.add',
-        headers,
-        data: {
-          channel: channelId,
-          timestamp: messageTs,
-          name: cleanEmoji
-        }
-      });
-      return res.data;
+      try {
+        const res = await CapacitorHttp.post({
+          url: 'https://slack.com/api/reactions.add',
+          headers,
+          data: {
+            channel: channelId,
+            timestamp: messageTs,
+            name: cleanEmoji
+          },
+          connectTimeout: 4000,
+          readTimeout: 4000
+        });
+        return res.data;
+      } catch (e) {
+        return { ok: false, error: e.message || 'Slack verbinding time-out' };
+      }
     } else {
       const res = await fetch('http://localhost:3001/api/test-reaction', {
         method: 'POST',
@@ -196,17 +231,65 @@ class SlackService {
         headers['Cookie'] = cookie;
       }
 
-      const res = await CapacitorHttp.get({
-        url: `https://teampicnic.slack.com/api/conversations.history?channel=${channelId}&limit=15`,
-        headers
-      });
-      const msgs = res.data?.ok ? res.data.messages : [];
-      this.recentMessages = msgs;
-      return msgs;
+      try {
+        const res = await CapacitorHttp.get({
+          url: `https://slack.com/api/conversations.history?channel=${channelId}&limit=15`,
+          headers,
+          connectTimeout: 4000,
+          readTimeout: 4000
+        });
+        const msgs = res.data?.ok ? res.data.messages : [];
+        this.recentMessages = msgs;
+        return msgs;
+      } catch (e) {
+        return [];
+      }
     } else {
       const res = await fetch('http://localhost:3001/api/recent-messages');
       const data = await res.json();
       return data?.messages || [];
+    }
+  }
+
+  async fetchServerStatus(serverUrl, serverToken) {
+    if (!serverUrl || !serverUrl.trim()) {
+      return { ok: false, error: 'Geen VPS server URL geconfigureerd in Instellingen' };
+    }
+    const cleanUrl = serverUrl.trim().replace(/\/+$/, '');
+    const startTime = Date.now();
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+      const res = await fetch(`${cleanUrl}/api/status`, {
+        headers: {
+          'x-api-key': serverToken || 'vrijcheck_secret_2026'
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      const pingMs = Date.now() - startTime;
+
+      if (!res.ok) {
+        return { ok: false, error: `VPS server antwoordde met status ${res.status}` };
+      }
+      const data = await res.json();
+      return {
+        ok: true,
+        pingMs,
+        serverTime: data.serverTime,
+        botStatus: data,
+        channelName: data.channelName || '#nl-dist-runners-hlm',
+        isPollingActive: data.isPollingActive,
+        lastCheck: data.lastCheck,
+        lastReaction: data.lastReaction,
+        connected: data.connected !== false
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err.name === 'AbortError' ? 'Time-out bij verbinden met VPS server (>3.5s)' : err.message
+      };
     }
   }
 
@@ -387,9 +470,14 @@ class SlackService {
   getShifts() {
     try {
       const raw = localStorage.getItem('vrijcheck_shifts');
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Object.keys(parsed).length > 0) {
+          return parsed;
+        }
+      }
     } catch (e) {}
-    return {};
+    return DEFAULT_SCHEDULE;
   }
 
   saveShifts(shifts) {

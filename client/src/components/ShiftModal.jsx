@@ -6,7 +6,6 @@ import { SHIFT_BLOCKS, SHIFT_BLOCK_MAP, getBlockInfo } from '../utils/constants'
 import { SlackEmoji } from './SlackEmoji';
 import { SlideToVrijcheck } from './SlideToVrijcheck';
 import { PicnicMascot } from './PicnicMascot';
-import confetti from 'canvas-confetti';
 import { sounds } from '../utils/audio';
 
 export const ShiftModal = ({
@@ -124,13 +123,6 @@ export const ShiftModal = ({
 
   const handleConfirmSlide = () => {
     setVrijcheckActive(true);
-    try {
-      confetti({
-        particleCount: 75,
-        spread: 60,
-        origin: { y: 0.7 }
-      });
-    } catch (e) {}
 
     try {
       sounds.playSuccess();

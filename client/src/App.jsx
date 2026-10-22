@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import confetti from 'canvas-confetti';
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { StatusBar } from '@capacitor/status-bar';
@@ -27,7 +26,7 @@ import { SlackEmoji } from './components/SlackEmoji';
 import { sounds } from './utils/audio';
 import { Smartphone, Monitor, CheckCircle2, Zap, ChevronLeft } from 'lucide-react';
 import { slackService } from './services/slackService';
-import { getShiftForBlock, saveShiftBlock, toggleVrijcheckForBlock } from './utils/shiftHelpers';
+import { getShiftForBlock, saveShiftBlock, toggleVrijcheckForBlock, calculateWeekHours } from './utils/shiftHelpers';
 
 const SOCKET_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3001'
@@ -67,6 +66,50 @@ export function App() {
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isServerConnected, setIsServerConnected] = useState(false);
+  const [vpsStatus, setVpsStatus] = useState({
+    isConnected: false,
+    pingMs: null,
+    botStatus: null,
+    error: null
+  });
+
+  const refreshVpsStatus = async () => {
+    const currentSettings = settings || slackService.getSettings();
+    const serverUrl = currentSettings?.serverUrl;
+    const serverToken = currentSettings?.serverToken;
+    if (!serverUrl) {
+      setVpsStatus({ isConnected: false, pingMs: null, botStatus: null, error: 'Geen server ingesteld' });
+      setIsServerConnected(false);
+      return;
+    }
+    const res = await slackService.fetchServerStatus(serverUrl, serverToken);
+    if (res.ok) {
+      setVpsStatus({
+        isConnected: true,
+        pingMs: res.pingMs,
+        botStatus: res.botStatus,
+        error: null
+      });
+      setIsServerConnected(true);
+      if (res.botStatus) {
+        setBotStatus(res.botStatus);
+      }
+    } else {
+      setVpsStatus({
+        isConnected: false,
+        pingMs: null,
+        botStatus: null,
+        error: res.error
+      });
+      setIsServerConnected(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshVpsStatus();
+    const interval = setInterval(refreshVpsStatus, 12000);
+    return () => clearInterval(interval);
+  }, [settings?.serverUrl, settings?.serverToken]);
 
   // Hide native Android status bar on launch
   useEffect(() => {
@@ -154,11 +197,6 @@ export function App() {
     slackService.startPolling((event) => {
       if (event.reactionSuccess) {
         sounds.playSuccess();
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 }
-        });
 
         setToast({
           type: 'success',
@@ -318,11 +356,6 @@ export function App() {
       s.on('bot:reaction_event', (event) => {
         if (event.reactionSuccess) {
           sounds.playSuccess();
-          confetti({
-            particleCount: 80,
-            spread: 70,
-            origin: { y: 0.6 }
-          });
 
           setToast({
             type: 'success',
@@ -594,7 +627,6 @@ export function App() {
       const res = await slackService.addReaction(channelId, ts, emoji, currentSettings);
       if (res?.ok || res?.error === 'already_reacted') {
         sounds.playSuccess();
-        confetti({ particleCount: 60, spread: 60 });
         setToast({
           type: 'success',
           title: 'Reactie Geplaatst!',
@@ -786,13 +818,16 @@ export function App() {
 
         {/* Content based on active tab */}
         {activeTab === 'home' && (
-          <div className="flex-1 overflow-y-auto pt-3.5 sm:pt-4">
+          <div className="flex-1 overflow-y-auto pt-2 sm:pt-3">
             <HomeView
               onNavigate={(tab) => setActiveTab(tab)}
               botStatus={botStatus}
+              vpsStatus={vpsStatus}
+              onRefreshVps={refreshVpsStatus}
               shifts={shifts}
               currentDate={currentDate}
               onTestReaction={() => handleTestRealReaction('3-red')}
+              settings={settings}
             />
           </div>
         )}
@@ -812,8 +847,8 @@ export function App() {
               onRefresh={handleRefreshAll}
               isRefreshing={isRefreshing}
               weekNumber={weekNumber}
+              totalHours={calculateWeekHours(shifts, weekDays)}
               isLiveBotActive={botStatus?.status === 'polling'}
-              isServerConnected={isServerConnected}
             />
 
             <div className="flex-1 overflow-y-auto">
