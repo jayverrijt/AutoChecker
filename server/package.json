@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node --test test/test_planner_reaction.js"
   },
   "dependencies": {
     "@slack/bolt": "^3.21.4",

@@ -6,7 +6,7 @@
   color-scheme: dark;
 }
 
-body {
+html, body {
   margin: 0;
   padding: 0;
   background-color: #0e0f12;
@@ -15,9 +15,53 @@ body {
   -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
+  overscroll-behavior-y: none;
+  height: 100%;
+  width: 100%;
 }
 
-/* Diagonal stripes pattern for "Wachten tot iemand je shift claimt" */
+button, [role="button"], input, a {
+  touch-action: manipulation;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0.3; transform: translateX(-35px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0.3; transform: translateX(35px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slideUp {
+  animation: slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slideInLeft {
+  animation: slideInLeft 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slideInRight {
+  animation: slideInRight 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Diagonal stripes pattern */
 .striped-card {
   background: repeating-linear-gradient(
     -45deg,
@@ -47,10 +91,10 @@ body {
   background: #3b3d47;
 }
 
-/* iOS Safe Areas */
+/* iOS & Android Safe Areas */
 .pb-safe {
-  padding-bottom: env(safe-area-inset-bottom, 16px);
+  padding-bottom: max(env(safe-area-inset-bottom, 16px), 16px);
 }
 .pt-safe {
-  padding-top: env(safe-area-inset-top, 12px);
+  padding-top: max(env(safe-area-inset-top, 24px), 24px);
 }

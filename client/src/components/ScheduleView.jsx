@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { format, isSameDay } from 'date-fns';
-import { nl } from 'date-fns/locale';
-import { ShiftCard } from './ShiftCard';
-import { Clock, Radio, Zap } from 'lucide-react';
-import { isCriticalListeningWindow } from '../utils/constants';
+import { Calendar, Zap } from 'lucide-react';
+import { SHIFT_BLOCKS } from '../utils/constants';
+import { formatDay2Letters, getShiftForBlock } from '../utils/shiftHelpers';
+import { SlackEmoji } from './SlackEmoji';
 
 export const ScheduleView = ({
   days,
@@ -11,115 +11,189 @@ export const ScheduleView = ({
   onSelectDate,
   shifts,
   onOpenShiftModal,
-  onToggleVrijcheck
+  onToggleVrijcheck,
+  onPrevWeek,
+  onNextWeek
 }) => {
-  const [criticalWindow, setCriticalWindow] = useState(isCriticalListeningWindow());
+  const touchStartXRef = useRef(null);
+  const touchStartYRef = useRef(null);
+  const [swipeAnimation, setSwipeAnimation] = useState('');
 
-  // Check critical window every 5 seconds
+  // Trigger smooth slide animation when days change
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCriticalWindow(isCriticalListeningWindow());
-    }, 5000);
-    return () => clearInterval(timer);
-  }, []);
+    setSwipeAnimation('animate-fadeIn');
+    const t = setTimeout(() => setSwipeAnimation(''), 250);
+    return () => clearTimeout(t);
+  }, [days[0]?.toISOString()]);
+
+  const handleTouchStart = (e) => {
+    if (!e.touches || e.touches.length === 0) return;
+    touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e) => {
+    if (touchStartXRef.current === null || touchStartYRef.current === null) return;
+    if (!e.changedTouches || e.changedTouches.length === 0) return;
+
+    const deltaX = e.changedTouches[0].clientX - touchStartXRef.current;
+    const deltaY = e.changedTouches[0].clientY - touchStartYRef.current;
+
+    touchStartXRef.current = null;
+    touchStartYRef.current = null;
+
+    // Primarily horizontal swipe of at least 45px
+    if (Math.abs(deltaX) > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) {
+      if (deltaX < 0) {
+        // Swiped left -> Next week
+        if (onNextWeek) {
+          try { navigator.vibrate?.(20); } catch (_) {}
+          setSwipeAnimation('animate-slideInRight');
+          onNextWeek();
+        }
+      } else {
+        // Swiped right -> Previous week
+        if (onPrevWeek) {
+          try { navigator.vibrate?.(20); } catch (_) {}
+          setSwipeAnimation('animate-slideInLeft');
+          onPrevWeek();
+        }
+      }
+    }
+  };
 
   return (
-    <div className="px-3 py-3 space-y-3 pb-24 overflow-y-auto">
-      {/* Timing Schedule Rules Card */}
-      <div className="bg-[#181920] border border-[#272934] rounded-2xl p-3.5 space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs font-bold text-white">
-            <Clock className="w-4 h-4 text-blue-400" />
-            <span>Vrijcheck Slack Release Tijden</span>
-          </div>
-          {criticalWindow.active ? (
-            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-black animate-pulse">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              {criticalWindow.target} LUISTER-VENSTER ACTIEF
-            </span>
-          ) : (
-            <span className="text-[10px] text-neutral-400 font-mono">#nl-dist-runners-hlm</span>
-          )}
-        </div>
+    <div
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      className={`px-3.5 py-1 pb-28 overflow-y-auto select-none scroll-smooth transition-all ${swipeAnimation}`}
+    >
+      {/* Days List with Sticky Date Headers & 5 Stacked Shift Cards */}
+      <div className="divide-y divide-[#22242f]">
+        {days.map((dayDate) => {
+          const dateKey = format(dayDate, 'yyyy-MM-dd');
+          const dayNumber = format(dayDate, 'd');
+          const dayName2 = formatDay2Letters(dayDate);
+          const isToday = isSameDay(dayDate, selectedDate);
 
-        <div className="grid grid-cols-2 gap-2 text-[11px]">
-          <div className="bg-[#1f212b] border border-[#2c2f3d] rounded-xl p-2.5">
-            <div className="font-bold text-amber-300 flex items-center gap-1">
-              <span>🌅 Ochtend (M1, M2)</span>
-            </div>
-            <div className="text-white font-black text-xs mt-0.5">17:10 uur</div>
-            <div className="text-[10px] text-neutral-400">Dag van tevoren</div>
-          </div>
-
-          <div className="bg-[#1f212b] border border-[#2c2f3d] rounded-xl p-2.5">
-            <div className="font-bold text-blue-300 flex items-center gap-1">
-              <span>☀️ Middag (S1, S2, S3)</span>
-            </div>
-            <div className="text-white font-black text-xs mt-0.5">10:10 uur</div>
-            <div className="text-[10px] text-neutral-400">Zelfde dag</div>
-          </div>
-        </div>
-
-        {criticalWindow.active && (
-          <div className="bg-emerald-950/40 border border-emerald-500/40 rounded-xl p-2 flex items-center gap-2 text-[11px] text-emerald-200">
-            <Radio className="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" />
-            <span>De bot luistert deze hele minuut continu om de post op de milliseconde te vangen!</span>
-          </div>
-        )}
-      </div>
-
-      {/* Week Days List */}
-      {days.map((dayDate) => {
-        const dateKey = format(dayDate, 'yyyy-MM-dd');
-        const dayNumber = format(dayDate, 'd');
-        const dayName = format(dayDate, 'EEE', { locale: nl }).toUpperCase();
-        const isSelected = isSameDay(dayDate, selectedDate);
-        const shift = shifts[dateKey];
-
-        return (
-          <div
-            key={dateKey}
-            className="flex items-start gap-2.5 group transition-all"
-          >
-            {/* Left Column: Day number & Weekday */}
+          return (
             <div
-              onClick={() => onSelectDate(dayDate)}
-              className="w-10 flex flex-col items-center pt-2 cursor-pointer shrink-0 select-none"
+              key={dateKey}
+              id={`day-${dateKey}`}
+              className={`py-3 flex items-start gap-3 sm:gap-4 transition-colors ${
+                isToday ? 'bg-blue-950/15 -mx-1.5 px-1.5 rounded-2xl' : ''
+              }`}
             >
+              {/* Left Column: Big Day Number + 2 Letters Weekday (MA, DI, WO, DO, VR, ZA, ZO) */}
               <div
-                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all ${
-                  isSelected
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                    : 'text-neutral-200 group-hover:text-white'
-                }`}
+                onClick={() => onSelectDate(dayDate)}
+                className="w-9 sm:w-10 pt-1 flex flex-col items-center cursor-pointer shrink-0 select-none group sticky top-2 z-10"
               >
-                {dayNumber}
+                <span
+                  className={`text-xl sm:text-2xl font-black leading-none tracking-tight transition-transform group-active:scale-90 ${
+                    isToday ? 'text-blue-400' : 'text-white'
+                  }`}
+                >
+                  {dayNumber}
+                </span>
+                <span
+                  className={`text-[11px] font-black tracking-wider uppercase mt-1 transition-colors ${
+                    isToday ? 'text-blue-400 font-extrabold' : 'text-neutral-400 group-hover:text-neutral-200'
+                  }`}
+                >
+                  {dayName2}
+                </span>
               </div>
-              <span
-                className={`text-[10px] font-semibold tracking-wider mt-0.5 ${
-                  isSelected ? 'text-blue-400 font-bold' : 'text-neutral-400'
-                }`}
-              >
-                {dayName}
-              </span>
-            </div>
 
-            {/* Right Column: Shift card with all 5 blocks M1-S3 */}
-            <div className="flex-1 min-w-0">
-              <ShiftCard
-                shift={shift}
-                date={dayDate}
-                isToday={isSelected}
-                onOpenBlockModal={(blockId) => {
-                  onSelectDate(dayDate);
-                  onOpenShiftModal(dayDate, blockId);
-                }}
-                onQuickToggleVrijcheck={() => onToggleVrijcheck(dateKey)}
-              />
+              {/* Right Column: Exactly 5 Stacked Shift Cards (M1, M2, S1, S2, S3) with scroll animations */}
+              <div className="flex-1 min-w-0 space-y-2">
+                {SHIFT_BLOCKS.map((blockDef, index) => {
+                  const shift = getShiftForBlock(shifts, dateKey, blockDef.id);
+                  const isActive = shift.vrijcheckActive === true;
+                  const isReacted = shift.reactionStatus?.success;
+                  const timeDisplay = `${shift.startTime || blockDef.defaultTime.split(' - ')[0]} - ${shift.endTime || blockDef.defaultTime.split(' - ')[1]}`;
+
+                  return (
+                    <div
+                      key={blockDef.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        onSelectDate(dayDate);
+                        onOpenShiftModal(dayDate, shift, blockDef.id);
+                      }}
+                      style={{
+                        animationDelay: `${index * 35}ms`
+                      }}
+                      className={`w-full rounded-2xl p-2.5 sm:p-3 flex items-center justify-between cursor-pointer border transition-all duration-150 active:scale-[0.98] select-none animate-slideUp shadow-sm hover:shadow-md ${
+                        isReacted
+                          ? 'bg-gradient-to-r from-emerald-600/90 to-teal-700/90 border-emerald-400/80 text-white'
+                          : isActive
+                          ? 'bg-[#2b68ee] hover:bg-[#3270f5] border-blue-400 text-white shadow-md shadow-blue-600/25 ring-1 ring-blue-400/40'
+                          : 'bg-[#181a22] hover:bg-[#20232e] border-[#262835] text-neutral-200'
+                      }`}
+                    >
+                      {/* Left: Calendar icon + Time range + Status Subtitle */}
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div
+                          className={`p-2 rounded-xl shrink-0 transition-colors ${
+                            isActive
+                              ? 'bg-white/20 text-white'
+                              : 'bg-[#222533] text-neutral-400'
+                          }`}
+                        >
+                          <Calendar className="w-4 h-4" />
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="text-xs sm:text-sm font-bold tracking-tight text-white flex items-center gap-1.5 truncate">
+                            <span>{timeDisplay}</span>
+                          </div>
+
+                          <div className="flex items-center gap-1 mt-0.5 text-[10px] sm:text-[11px]">
+                            {isReacted ? (
+                              <span className="text-emerald-100 font-semibold flex items-center gap-1">
+                                ✓ Vrij gereageerd ({shift.reactionStatus.latencyMs}ms)
+                              </span>
+                            ) : isActive ? (
+                              <span className="text-amber-200 font-bold flex items-center gap-1 animate-pulse">
+                                <Zap className="w-2.5 h-2.5 fill-amber-300 text-amber-300" />
+                                <span>Vrijcheck Scherp • {blockDef.postTime}</span>
+                              </span>
+                            ) : (
+                              <span className="text-neutral-400 font-medium truncate">
+                                {blockDef.description}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Badge with [M1] / [M2] / [S1] / [S2] / [S3] and emoji */}
+                      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-2">
+                        <div className="scale-90">
+                          <SlackEmoji name={blockDef.emoji} size="xs" />
+                        </div>
+                        <div
+                          className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg font-black text-xs tracking-wide transition-colors ${
+                            isReacted
+                              ? 'bg-black/30 text-white border border-emerald-300/40'
+                              : isActive
+                              ? 'bg-black/25 text-white border border-white/30'
+                              : 'bg-[#242735] text-neutral-300 border border-[#313546]'
+                          }`}
+                        >
+                          {blockDef.label}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 };

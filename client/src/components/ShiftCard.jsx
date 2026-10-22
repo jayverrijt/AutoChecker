@@ -1,120 +1,97 @@
 import React from 'react';
-import { Calendar, CheckCircle2, Zap, AlertCircle, Clock } from 'lucide-react';
-import { SlackEmoji } from './SlackEmoji';
-import { SHIFT_BLOCKS, SHIFT_BLOCK_MAP } from '../utils/constants';
+import { Calendar, CalendarX, Zap, Check } from 'lucide-react';
+import { getBlockInfo } from '../utils/constants';
 
 export const ShiftCard = ({
   shift,
   date,
-  isToday,
-  onOpenBlockModal,
+  isVrij = false,
+  vrijTime = '07:00 - 23:00',
+  isGeenShift = false,
+  onClick,
   onQuickToggleVrijcheck
 }) => {
-  const selectedBlockId = shift?.block || 'none';
-  const selectedBlockInfo = SHIFT_BLOCK_MAP[selectedBlockId];
-  const hasShift = selectedBlockId !== 'none';
-  const reaction = shift?.reactionStatus;
-  const isVrijcheckActive = shift?.vrijcheckActive !== false;
-  const isReacted = reaction && reaction.success;
+  // 1. Geen shift Card (Matches Screenshot 1 e.g. 4 WO, 5 DO)
+  if (isGeenShift || (!shift && !isVrij)) {
+    return (
+      <div
+        onClick={onClick}
+        className="w-full bg-[#383a42] hover:bg-[#40434b] active:scale-[0.99] border border-white/5 rounded-2xl px-4 py-3.5 flex items-center justify-between cursor-pointer transition-all select-none shadow-sm"
+      >
+        <span className="text-sm font-semibold text-neutral-300">
+          Geen shift
+        </span>
+      </div>
+    );
+  }
+
+  // 2. Vrij Card (Matches Screenshot 1 e.g. 8 ZO)
+  if (isVrij) {
+    return (
+      <div
+        onClick={onClick}
+        className="w-full bg-[#383a42] hover:bg-[#40434b] active:scale-[0.99] border border-white/5 rounded-2xl px-4 py-3 flex items-center justify-between cursor-pointer transition-all select-none shadow-sm"
+      >
+        <div className="flex items-center gap-3">
+          <CalendarX className="w-5 h-5 text-neutral-300 stroke-[2.2]" />
+          <div>
+            <div className="font-bold text-white text-sm tracking-tight leading-tight">
+              {vrijTime}
+            </div>
+            <div className="text-xs text-neutral-300 font-medium mt-0.5">
+              Vrij
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Ingeroosterd Shift Card (Matches Screenshot 1 e.g. 6 VR, 7 ZA)
+  const blockDef = getBlockInfo(shift.block);
+  const startTime = shift.startTime || blockDef?.defaultTime?.split(' - ')[0] || '10:15';
+  const endTime = shift.endTime || blockDef?.defaultTime?.split(' - ')[1] || '13:00';
+  const isVrijcheckActive = shift.vrijcheckActive !== false;
+  const reactionStatus = shift.reactionStatus;
 
   return (
     <div
-      className={`w-full rounded-2xl p-3.5 transition-all border relative overflow-hidden select-none shadow-sm ${
-        isReacted
-          ? 'bg-gradient-to-r from-blue-900/60 via-blue-800/50 to-indigo-900/60 border-emerald-500/70 shadow-[0_0_15px_rgba(16,185,129,0.2)]'
-          : hasShift
-          ? isVrijcheckActive
-            ? 'bg-[#1b2234] border-blue-500/40 hover:border-blue-400'
-            : 'bg-[#191b22] border-[#292b35] hover:border-neutral-700'
-          : 'bg-[#18191f] border-[#262833] hover:border-[#333644]'
+      onClick={onClick}
+      className={`w-full rounded-2xl px-4 py-3.5 flex items-center justify-between cursor-pointer transition-all active:scale-[0.99] select-none shadow-md relative overflow-hidden group ${
+        reactionStatus?.success
+          ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-600 text-white shadow-emerald-500/20'
+          : 'bg-[#3171f7] hover:bg-[#2b65de] text-white shadow-blue-500/20'
       }`}
     >
-      {/* Top row: Status info */}
-      <div className="flex items-center justify-between">
-        {hasShift ? (
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-sm text-white tracking-tight">
-              {shift.startTime || selectedBlockInfo?.defaultTime?.split(' - ')[0] || '13:00'} -{' '}
-              {shift.endTime || selectedBlockInfo?.defaultTime?.split(' - ')[1] || '21:30'}
-            </span>
-            <span className="text-[11px] text-neutral-400">
-              ({selectedBlockInfo?.period === 'OCHTEND' ? 'Ochtend' : 'Middag'})
-            </span>
+      {/* Left side: Calendar icon + Time + Ingeroosterd */}
+      <div className="flex items-center gap-3">
+        <Calendar className="w-5 h-5 text-white stroke-[2.3] shrink-0" />
+        <div>
+          <div className="font-bold text-white text-base tracking-tight leading-tight">
+            {startTime} - {endTime}
           </div>
-        ) : (
-          <span className="text-xs font-semibold text-neutral-400">
-            Geen shift geselecteerd
-          </span>
-        )}
-
-        {hasShift && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onQuickToggleVrijcheck();
-            }}
-            className={`flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full transition-all cursor-pointer ${
-              isVrijcheckActive
-                ? 'bg-blue-600/30 text-blue-300 border border-blue-400/50 hover:bg-blue-600/40'
-                : 'bg-neutral-800 text-neutral-400 border border-neutral-700 hover:text-white'
-            }`}
-          >
-            <Zap className={`w-3 h-3 ${isVrijcheckActive ? 'text-amber-300 fill-amber-300' : 'text-neutral-500'}`} />
-            <span>{isVrijcheckActive ? 'Vrijcheck AAN' : 'Vrijcheck UIT'}</span>
-          </button>
-        )}
+          <div className="text-xs text-white/90 font-medium mt-0.5 flex items-center gap-1.5">
+            <span>Ingeroosterd</span>
+            {isVrijcheckActive && (
+              <span className="inline-flex items-center gap-0.5 text-[10px] bg-white/20 px-1.5 py-0.2 rounded-full font-bold">
+                <Zap className="w-2.5 h-2.5 fill-amber-300 text-amber-300" />
+                <span>Vrijcheck</span>
+              </span>
+            )}
+            {reactionStatus?.success && (
+              <span className="inline-flex items-center gap-0.5 text-[10px] bg-emerald-500 px-1.5 py-0.2 rounded-full font-bold">
+                <Check className="w-2.5 h-2.5 stroke-[3]" />
+                <span>Gereageerd</span>
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Reaction feedback status */}
-      {isReacted ? (
-        <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between bg-black/20 rounded-xl px-2.5 py-1.5">
-          <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="text-xs font-bold text-emerald-300 flex items-center gap-1">
-              Gereageerd met <SlackEmoji name={reaction.emoji} size="xs" />
-            </span>
-          </div>
-          <span className="text-[10px] text-emerald-200/90 font-mono">
-            {reaction.latencyMs ? `${reaction.latencyMs}ms` : 'Gelukt!'}
-          </span>
-        </div>
-      ) : hasShift && isVrijcheckActive ? (
-        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-blue-300/80">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-          <span>
-            {selectedBlockInfo?.period === 'OCHTEND'
-              ? 'Wacht op 17:10 bericht (dag tevoren)'
-              : 'Wacht op 10:10 bericht (vandaag)'}
-          </span>
-        </div>
-      ) : null}
-
-      {/* Row of ALL 5 SHIFTS (M1, M2, S1, S2, S3) - User taps one to open Slide-to-Vrijcheck */}
-      <div className="mt-2.5 pt-2 border-t border-[#252834]">
-        <div className="flex items-center justify-between gap-1.5">
-          {SHIFT_BLOCKS.map((b) => {
-            const isThisSelected = selectedBlockId === b.id;
-            return (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => onOpenBlockModal(b.id)}
-                className={`flex-1 py-1.5 px-0.5 rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 ${
-                  isThisSelected
-                    ? isVrijcheckActive
-                      ? 'bg-gradient-to-b from-blue-600 to-indigo-600 border-blue-400 text-white shadow-md shadow-blue-600/30 font-black'
-                      : 'bg-blue-600/30 border-blue-500 text-white font-bold'
-                    : 'bg-[#21232c] hover:bg-[#282a35] border-[#2c2e39] text-neutral-300'
-                }`}
-              >
-                <span className="text-xs font-black tracking-tight">{b.label}</span>
-                <div className="mt-0.5 scale-90">
-                  <SlackEmoji name={b.emoji} size="xs" />
-                </div>
-              </button>
-            );
-          })}
+      {/* Right side: Dark Pill with Shift Block (e.g. M2, S1, S1-S2-S3) */}
+      <div className="flex items-center gap-2">
+        <div className="bg-[#182a52] text-white font-bold text-xs px-2.5 py-1.5 rounded-lg tracking-wide border border-white/10 shadow-inner">
+          {shift.block}
         </div>
       </div>
     </div>

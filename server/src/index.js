@@ -14,9 +14,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CLIENT_DIST = path.join(__dirname, '../../client/dist');
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
+export const app = express();
+export const server = http.createServer(app);
+
+export const getServerApiKey = () => {
+  return process.env.SERVER_API_KEY || db.getSettings().serverApiKey || 'vrijcheck_secret_2026';
+};
+
+export const io = new Server(server, {
   cors: {
     origin: '*',
     methods: ['GET', 'POST']
@@ -33,15 +38,29 @@ if (CLIENT_DIST) {
   app.use(express.static(CLIENT_DIST));
 }
 
-
-const botManager = new SlackBotManager(io);
+export const botManager = new SlackBotManager(io);
 
 // Initialize bot on startup
 botManager.initialize();
 
+// Socket.io Authentication Middleware
+io.use((socket, next) => {
+  const expectedKey = getServerApiKey();
+  const token = 
+    socket.handshake.auth?.token ||
+    socket.handshake.headers?.['x-api-key'] ||
+    socket.handshake.query?.token;
+
+  if (!token || token !== expectedKey) {
+    console.warn(`[SOCKET] Verbinding geweigerd (ongeldig token): ${socket.id}`);
+    return next(new Error('Niet geautoriseerd: ongeldig of ontbrekend server token'));
+  }
+  next();
+});
+
 // Socket.io handlers
 io.on('connection', (socket) => {
-  console.log(`[SOCKET] Client verbonden: ${socket.id}`);
+  console.log(`[SOCKET] Geautoriseerde client verbonden: ${socket.id}`);
 
   // Send initial state to newly connected client
   socket.emit('bot:status', botManager.getStatus());
@@ -54,7 +73,55 @@ io.on('connection', (socket) => {
   });
 });
 
+// REST API Authentication Middleware
+app.use((req, res, next) => {
+  // Allow health check, auth verification, and non-api routes without token
+  if (
+    req.path === '/api/health' || 
+    req.path === '/api/auth/verify' || 
+    !req.path.startsWith('/api')
+  ) {
+    return next();
+  }
+
+  const expectedKey = getServerApiKey();
+  const providedKey = 
+    req.headers['x-api-key'] ||
+    req.headers.authorization?.replace(/^Bearer\s+/i, '') ||
+    req.query.token;
+
+  if (!providedKey || providedKey !== expectedKey) {
+    return res.status(401).json({ 
+      ok: false, 
+      error: 'Niet geautoriseerd: ongeldig of ontbrekend Server Authenticatie Token. Geef x-api-key header mee.' 
+    });
+  }
+
+  next();
+});
+
 // REST API Endpoints
+
+// 0. Auth Verification
+app.post('/api/auth/verify', (req, res) => {
+  const { token } = req.body || {};
+  const expectedKey = getServerApiKey();
+
+  if (token && token === expectedKey) {
+    res.json({
+      ok: true,
+      authenticated: true,
+      serverTime: new Date().toISOString(),
+      message: 'Server authenticatie succesvol!'
+    });
+  } else {
+    res.status(401).json({
+      ok: false,
+      authenticated: false,
+      error: 'Ongeldig server token. Controleer de geconfigureerde API-sleutel.'
+    });
+  }
+});
 
 // 1. Shifts
 app.get('/api/shifts', (req, res) => {
@@ -100,7 +167,11 @@ app.post('/api/settings', async (req, res) => {
 
 // 3. Bot Status & Control
 app.get('/api/status', (req, res) => {
-  res.json(botManager.getStatus());
+  res.json({
+    ...botManager.getStatus(),
+    serverTime: new Date().toISOString(),
+    authRequired: true
+  });
 });
 
 app.post('/api/bot/reconnect', async (req, res) => {
@@ -137,7 +208,7 @@ app.post('/api/history/clear', (req, res) => {
   res.json({ success: true, history: cleared });
 });
 
-// 5. Simulation Endpoint (Simuleer Day-Planning-Sender bericht)
+// 5. Emulation Endpoints (Day-Planning-Sender Emulatie & Benchmark)
 app.post('/api/simulate', async (req, res) => {
   const { period = 'MIDDAG', date = '17-10-2026', overschotten } = req.body;
   const result = await botManager.simulateDayPlannerMessage({
@@ -148,9 +219,39 @@ app.post('/api/simulate', async (req, res) => {
   res.json({ success: true, result });
 });
 
+app.post('/api/test/emulate-planner', async (req, res) => {
+  const {
+    period = 'OCHTEND',
+    date,
+    minDelayMs = 40,
+    maxDelayMs = 180,
+    overschotten,
+    isSimulation = true
+  } = req.body || {};
+
+  try {
+    const emulation = await botManager.emulator.emulatePost({
+      period,
+      date,
+      minDelayMs,
+      maxDelayMs,
+      overschotten,
+      isSimulation
+    });
+    res.json({ ok: true, emulation });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', time: new Date().toISOString() });
+  res.json({ 
+    status: 'ok', 
+    server: 'vrijcheck-24-7',
+    time: new Date().toISOString(),
+    authRequired: true
+  });
 });
 
 // SPA wildcard fallback
@@ -158,7 +259,10 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(CLIENT_DIST, 'index.html'));
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-
-  console.log(`[SERVER] Vrijcheck backend actief op http://0.0.0.0:${PORT}`);
-});
+// Start listening if run directly
+if (process.env.NODE_ENV !== 'test') {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[SERVER] 🚀 Vrijcheck 24/7 webserver actief op http://0.0.0.0:${PORT}`);
+    console.log(`[SERVER] 🔒 Beveiligd met Server Token authenticatie.`);
+  });
+}

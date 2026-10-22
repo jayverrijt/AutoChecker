@@ -1,0 +1,20 @@
+{
+  "workspaceUrl": "https://picnic.enterprise.slack.com",
+  "slackToken": "xoxc-your-token-here",
+  "slackCookie": "xoxd-your-cookie-here",
+  "channelName": "#nl-dist-runners-hlm",
+  "channelId": "CAM2MJTA9",
+  "botSenderName": "Day-Planning-Sender",
+  "autoReact": true,
+  "pollIntervalMs": 1000,
+  "serverApiKey": "vrijcheck_secret_2026",
+  "emojiMapping": {
+    "M1": "1-red",
+    "M2": "2-red",
+    "S1": "1-red",
+    "S2": "2-red",
+    "S3": "3-red"
+  },
+  "soundEnabled": true,
+  "simulationMode": false
+}

@@ -1,19 +1,22 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { isCriticalListeningWindow } from '../utils/constants';
+import { getShiftForBlock, saveShiftBlock } from '../utils/shiftHelpers';
 
 const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
 export const DEFAULT_SETTINGS = {
   workspaceUrl: 'https://picnic.enterprise.slack.com',
-  slackToken: 'xoxc-REDACTED-PICNIC-SESSION',
-  slackCookie: 'xoxd-REDACTED-COOKIE',
+  slackToken: '',
+  slackCookie: '',
   channelName: '#nl-dist-runners-hlm',
   channelId: 'CAM2MJTA9',
   botSenderName: 'Day-Planning-Sender',
   autoReact: true,
   pollIntervalMs: 1000,
   soundEnabled: true,
+  serverUrl: '',
+  serverToken: 'vrijcheck_secret_2026',
   emojiMapping: {
     M1: '1-red',
     M2: '2-red',
@@ -22,6 +25,8 @@ export const DEFAULT_SETTINGS = {
     S3: '3-red'
   }
 };
+
+export const DEFAULT_SHIFTS = {};
 
 class SlackService {
   constructor() {
@@ -250,21 +255,27 @@ class SlackService {
     const messages = await this.fetchRecentMessages(channelId, settings);
     if (!messages || messages.length === 0) return;
 
-    const shifts = this.getShifts();
+    let currentShifts = this.getShifts();
 
     for (const msg of messages) {
       if (this.processedMessageIds.has(msg.ts)) continue;
 
       const text = msg.text || '';
-      const isPlanner = text.includes('Graag voor') || 
+      const isPlanner = msg.user === 'U062ALTD6DQ' ||
+                        text.includes('*OCHTEND') ||
+                        text.includes('*MIDDAG') ||
+                        text.includes('Graag voor') || 
                         text.includes('Overschotten') || 
                         text.includes('Check je vrij') || 
                         (msg.username && msg.username.includes('Planning'));
 
-      if (!isPlanner) continue;
+      if (!isPlanner) {
+        this.processedMessageIds.add(msg.ts);
+        continue;
+      }
 
       // Extract date & period
-      const dateMatch = text.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/);
+      const dateMatch = text.match(/(\d{1,2})\s*[-/]\s*(\d{1,2})\s*[-/]\s*(\d{2,4})/);
       let targetIsoDate = null;
       if (dateMatch) {
         let d = dateMatch[1].padStart(2, '0');
@@ -287,41 +298,63 @@ class SlackService {
         targetIsoDate = new Date().toISOString().split('T')[0];
       }
 
-      if (targetIsoDate && shifts[targetIsoDate]) {
-        const userShift = shifts[targetIsoDate];
-        if (userShift.block !== 'none' && userShift.vrijcheckActive !== false && !userShift.reactionStatus?.success) {
-          const mapping = settings.emojiMapping || DEFAULT_SETTINGS.emojiMapping;
-          const emojiToReact = mapping[userShift.block] || '1-red';
+      if (targetIsoDate) {
+        const candidateBlocks = period === 'OCHTEND' 
+          ? ['M1', 'M2'] 
+          : period === 'MIDDAG' 
+          ? ['S1', 'S2', 'S3'] 
+          : ['M1', 'M2', 'S1', 'S2', 'S3'];
 
-          const startTime = Date.now();
-          const reactRes = await this.addReaction(channelId, msg.ts, emojiToReact, settings);
-          const latencyMs = Date.now() - startTime;
+        let anyReacted = false;
 
-          if (reactRes?.ok || reactRes?.error === 'already_reacted') {
-            this.processedMessageIds.add(msg.ts);
-            userShift.reactionStatus = {
-              success: true,
-              emoji: emojiToReact,
-              latencyMs,
-              ts: Date.now()
-            };
-            shifts[targetIsoDate] = userShift;
-            this.saveShifts(shifts);
+        for (const bId of candidateBlocks) {
+          const userShift = getShiftForBlock(currentShifts, targetIsoDate, bId);
+          if (userShift && userShift.vrijcheckActive === true && !userShift.reactionStatus?.success) {
+            const mapping = settings.emojiMapping || DEFAULT_SETTINGS.emojiMapping;
+            const emojiToReact = mapping[bId] || (bId.includes('3') ? '3-red' : bId.includes('2') ? '2-red' : '1-red');
 
-            // Notify listeners
-            this.reactionListeners.forEach(cb => cb({
-              reactionSuccess: true,
-              emoji: emojiToReact,
-              latencyMs,
-              shift: userShift,
-              date: targetIsoDate
-            }));
-            return;
+            const startTime = Date.now();
+            const reactRes = await this.addReaction(channelId, msg.ts, emojiToReact, settings);
+            const latencyMs = Date.now() - startTime;
+
+            if (reactRes?.ok || reactRes?.error === 'already_reacted') {
+              anyReacted = true;
+              const updatedShift = {
+                ...userShift,
+                reactionStatus: {
+                  success: true,
+                  emoji: emojiToReact,
+                  latencyMs,
+                  ts: Date.now()
+                }
+              };
+              currentShifts = saveShiftBlock(currentShifts, targetIsoDate, bId, updatedShift);
+              this.saveShifts(currentShifts);
+
+              // Notify listeners
+              this.reactionListeners.forEach(cb => cb({
+                reactionSuccess: true,
+                emoji: emojiToReact,
+                latencyMs,
+                shift: updatedShift,
+                date: targetIsoDate,
+                blockId: bId
+              }));
+            }
           }
+        }
+
+        if (anyReacted) {
+          this.processedMessageIds.add(msg.ts);
+          return;
         }
       }
 
-      this.processedMessageIds.add(msg.ts);
+      // If message is older than 1 hour, ignore it in future polls
+      const msgAgeSec = (Date.now() / 1000) - parseFloat(msg.ts || 0);
+      if (msgAgeSec > 3600) {
+        this.processedMessageIds.add(msg.ts);
+      }
     }
   }
 
@@ -364,11 +397,105 @@ class SlackService {
       localStorage.setItem('vrijcheck_shifts', JSON.stringify(shifts));
     } catch (e) {}
 
-    fetch('http://localhost:3001/api/shifts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(shifts)
-    }).catch(() => {});
+    const settings = this.getSettings();
+    const serverUrl = (settings.serverUrl || 'http://localhost:3001').replace(/\/+$/, '');
+    const serverToken = settings.serverToken || 'vrijcheck_secret_2026';
+
+    const headers = { 
+      'Content-Type': 'application/json',
+      'x-api-key': serverToken
+    };
+
+    if (Capacitor.isNativePlatform()) {
+      CapacitorHttp.post({
+        url: `${serverUrl}/api/shifts/bulk`,
+        headers,
+        data: { shifts }
+      }).catch(() => {});
+    } else {
+      fetch(`${serverUrl}/api/shifts/bulk`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ shifts })
+      }).catch(() => {});
+    }
+  }
+
+  /**
+   * Test connection to the 24/7 Vrijcheck Webserver using the Server Auth Token
+   */
+  async testServerConnection(url, token) {
+    const cleanUrl = (url || 'http://localhost:3001').replace(/\/+$/, '');
+    const cleanToken = (token || '').trim();
+
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const res = await CapacitorHttp.post({
+          url: `${cleanUrl}/api/auth/verify`,
+          headers: { 'Content-Type': 'application/json' },
+          data: { token: cleanToken }
+        });
+        if (res?.data?.ok) {
+          return { ok: true, message: 'Verbonden met 24/7 webserver!' };
+        }
+        return { ok: false, error: res?.data?.error || 'Ongeldig server token of server onbereikbaar' };
+      } else {
+        const res = await fetch(`${cleanUrl}/api/auth/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: cleanToken })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          return { ok: true, message: 'Verbonden met 24/7 webserver!' };
+        }
+        return { ok: false, error: data.error || 'Server authenticatie geweigerd' };
+      }
+    } catch (err) {
+      return { ok: false, error: `Kon geen verbinding maken met ${cleanUrl}: ${err.message}` };
+    }
+  }
+
+  /**
+   * Trigger Day-Planning-Sender emulation on the 24/7 server to benchmark latency
+   */
+  async emulateOnServer(url, token, options = {}) {
+    const cleanUrl = (url || 'http://localhost:3001').replace(/\/+$/, '');
+    const cleanToken = (token || '').trim();
+
+    const payload = {
+      period: options.period || 'OCHTEND',
+      date: options.date,
+      minDelayMs: options.minDelayMs || 40,
+      maxDelayMs: options.maxDelayMs || 150,
+      isSimulation: true
+    };
+
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const res = await CapacitorHttp.post({
+          url: `${cleanUrl}/api/test/emulate-planner`,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': cleanToken
+          },
+          data: payload
+        });
+        return res.data;
+      } else {
+        const res = await fetch(`${cleanUrl}/api/test/emulate-planner`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': cleanToken
+          },
+          body: JSON.stringify(payload)
+        });
+        return await res.json();
+      }
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
   }
 
   getStatus() {
@@ -389,6 +516,22 @@ class SlackService {
     return () => {
       this.statusListeners = this.statusListeners.filter(l => l !== cb);
     };
+  }
+
+  logout() {
+    this.stopPolling();
+    this.cachedAuth = null;
+    this.recentMessages = [];
+    const cleared = {
+      ...this.getSettings(),
+      slackToken: '',
+      slackCookie: ''
+    };
+    try {
+      localStorage.setItem('vrijcheck_settings', JSON.stringify(cleared));
+    } catch (e) {}
+    this.emitStatus();
+    return cleared;
   }
 
   emitStatus() {

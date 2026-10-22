@@ -66,10 +66,58 @@ export const SHIFT_BLOCK_MAP = SHIFT_BLOCKS.reduce((acc, curr) => {
   return acc;
 }, {});
 
+export function getBlockInfo(blockId) {
+  if (!blockId || blockId === 'none') return null;
+  if (SHIFT_BLOCK_MAP[blockId]) return SHIFT_BLOCK_MAP[blockId];
+
+  // Compound block e.g. 'S1-S2-S3'
+  if (blockId.includes('S')) {
+    return {
+      id: blockId,
+      label: blockId,
+      period: 'MIDDAG',
+      defaultTime: '14:00 - 22:15',
+      emoji: '3-red',
+      color: 'blue',
+      description: `Middag/Avond Shift (${blockId})`,
+      postTime: '10:10',
+      timingLabel: '10:10 (dezelfde dag)',
+      timingNote: 'Day-Planning-Sender stuurt het bericht om 10:10 (dezelfde dag).'
+    };
+  }
+
+  if (blockId.includes('M')) {
+    return {
+      id: blockId,
+      label: blockId,
+      period: 'OCHTEND',
+      defaultTime: '06:30 - 15:00',
+      emoji: '1-red',
+      color: 'blue',
+      description: `Ochtend Shift (${blockId})`,
+      postTime: '17:10',
+      timingLabel: '17:10 (dag van tevoren)',
+      timingNote: 'Day-Planning-Sender stuurt het bericht om 17:10 (de dag van tevoren).'
+    };
+  }
+
+  return {
+    id: blockId,
+    label: blockId,
+    period: 'MIDDAG',
+    defaultTime: '13:00 - 21:30',
+    emoji: '1-red',
+    color: 'blue',
+    postTime: '10:10',
+    timingLabel: '10:10 (dezelfde dag)',
+    timingNote: 'Day-Planning-Sender stuurt het bericht om 10:10 (dezelfde dag).'
+  };
+}
+
 /**
  * Checks if current time is within the critical listening window:
- * Morning shifts: 17:09:45 to 17:11:15
- * Afternoon shifts: 10:09:45 to 10:11:15
+ * Morning shifts: 17:09:40 to 17:11:59 (Day-Planner-Sender post seconden variëren, bijv. 17:10:19, 17:10:28)
+ * Afternoon shifts: 10:09:40 to 10:11:59 (Day-Planner-Sender post seconden variëren, bijv. 10:10:28, 10:11:00)
  */
 export function isCriticalListeningWindow(now = new Date()) {
   const hours = now.getHours();
@@ -77,8 +125,8 @@ export function isCriticalListeningWindow(now = new Date()) {
   const seconds = now.getSeconds();
 
   // Window 1: Morning shifts release (17:10)
-  // Check from 17:09 (seconds >= 45) through 17:10 and 17:11 (seconds <= 15)
-  if (hours === 17 && (minutes === 10 || (minutes === 9 && seconds >= 45) || (minutes === 11 && seconds <= 15))) {
+  // Check from 17:09:40 through 17:10:00-59 and 17:11:00-59
+  if (hours === 17 && (minutes === 10 || minutes === 11 || (minutes === 9 && seconds >= 40))) {
     return {
       active: true,
       period: 'OCHTEND',
@@ -88,8 +136,8 @@ export function isCriticalListeningWindow(now = new Date()) {
   }
 
   // Window 2: Afternoon shifts release (10:10)
-  // Check from 10:09 (seconds >= 45) through 10:10 and 10:11 (seconds <= 15)
-  if (hours === 10 && (minutes === 10 || (minutes === 9 && seconds >= 45) || (minutes === 11 && seconds <= 15))) {
+  // Check from 10:09:40 through 10:10:00-59 and 10:11:00-59
+  if (hours === 10 && (minutes === 10 || minutes === 11 || (minutes === 9 && seconds >= 40))) {
     return {
       active: true,
       period: 'MIDDAG',

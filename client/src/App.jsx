@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import confetti from 'canvas-confetti';
+import { App as CapApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
+import { StatusBar } from '@capacitor/status-bar';
 import { 
   addDays, 
   startOfWeek, 
@@ -12,14 +15,19 @@ import {
 import { nl } from 'date-fns/locale';
 import { Header } from './components/Header';
 import { ScheduleView } from './components/ScheduleView';
+import { HomeView } from './components/HomeView';
+import { MenuView } from './components/MenuView';
+import { LoginView } from './components/LoginView';
 import { ShiftModal } from './components/ShiftModal';
+import { DatePickerModal } from './components/DatePickerModal';
 import { SlackLiveView } from './components/SlackLiveView';
 import { SettingsView } from './components/SettingsView';
 import { BottomNav } from './components/BottomNav';
 import { SlackEmoji } from './components/SlackEmoji';
 import { sounds } from './utils/audio';
-import { Smartphone, Monitor, CheckCircle2, Zap } from 'lucide-react';
+import { Smartphone, Monitor, CheckCircle2, Zap, ChevronLeft } from 'lucide-react';
 import { slackService } from './services/slackService';
+import { getShiftForBlock, saveShiftBlock, toggleVrijcheckForBlock } from './utils/shiftHelpers';
 
 const SOCKET_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3001'
@@ -28,10 +36,15 @@ const SOCKET_URL = window.location.hostname === 'localhost' || window.location.h
 
 export function App() {
   const [socket, setSocket] = useState(null);
-  const [activeTab, setActiveTab] = useState('schedule'); // 'schedule' | 'live' | 'settings'
+  const [activeTab, setActiveTab] = useState('schedule'); // 'home' | 'schedule' | 'menu' | 'live' | 'settings'
   
-  // Default to 17-10-2026 (matching the Day-Planning-Sender message in screenshot)
-  const initialDate = new Date(2026, 9, 17); // Month is 0-indexed: 9 = October
+  // Authentication gate state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [authError, setAuthError] = useState(null);
+
+  // Default to today / current week
+  const initialDate = new Date();
   const [currentDate, setCurrentDate] = useState(initialDate);
   const [selectedDate, setSelectedDate] = useState(initialDate);
 
@@ -43,56 +56,238 @@ export function App() {
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalDate, setModalDate] = useState(initialDate);
-  const [modalInitialBlock, setModalInitialBlock] = useState(null);
+  const [modalCurrentShift, setModalCurrentShift] = useState(null);
+  const [modalShiftIndex, setModalShiftIndex] = useState(0);
 
   const [toast, setToast] = useState(null);
   const [hasUnreadReaction, setHasUnreadReaction] = useState(false);
   const [isDeviceFrame, setIsDeviceFrame] = useState(true);
 
+  // Date picker modal & Refresh state
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isServerConnected, setIsServerConnected] = useState(false);
 
-  // Initialize Socket.io & Local Standalone Services
+  // Hide native Android status bar on launch
   useEffect(() => {
-    // 1. Instantly populate from local storage so native app has data immediately
-    const initialShifts = slackService.getShifts();
-    const initialSettings = slackService.getSettings();
-    setShifts(initialShifts);
-    setSettings(initialSettings);
-    if (initialSettings.soundEnabled !== undefined) {
-      sounds.enabled = initialSettings.soundEnabled;
+    if (Capacitor.isNativePlatform()) {
+      try {
+        StatusBar.hide();
+      } catch (err) {
+        console.warn('Could not hide status bar', err);
+      }
     }
+  }, []);
 
-    // 2. Perform connection test on launch to populate botStatus & runner username
-    slackService.testConnection(initialSettings).then((res) => {
-      if (res?.ok && res?.auth) {
-        setBotStatus({
-          status: 'connected',
-          authInfo: res.auth,
-          channelName: initialSettings.channelName,
-          channelId: initialSettings.channelId
+  // Manage Android Hardware / Gesture Back Button
+  const isModalOpenRef = useRef(isModalOpen);
+  const isDatePickerOpenRef = useRef(isDatePickerOpen);
+  const activeTabRef = useRef(activeTab);
+  const lastBackTimeRef = useRef(0);
+
+  useEffect(() => {
+    isModalOpenRef.current = isModalOpen;
+  }, [isModalOpen]);
+
+  useEffect(() => {
+    isDatePickerOpenRef.current = isDatePickerOpen;
+  }, [isDatePickerOpen]);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    let listenerHandle = null;
+
+    const setupBackHandler = async () => {
+      try {
+        listenerHandle = await CapApp.addListener('backButton', () => {
+          const now = Date.now();
+          if (now - lastBackTimeRef.current < 350) return;
+          lastBackTimeRef.current = now;
+
+          // 0. If DatePickerModal is open, close it!
+          if (isDatePickerOpenRef.current) {
+            setIsDatePickerOpen(false);
+            return;
+          }
+
+          // 1. If ShiftModal is open, close the modal instead of exiting the app!
+          if (isModalOpenRef.current) {
+            setIsModalOpen(false);
+            return;
+          }
+
+          // 2. If on Slack Live or Settings sub-tab, go back to Menu!
+          if (activeTabRef.current === 'live' || activeTabRef.current === 'settings') {
+            setActiveTab('menu');
+            return;
+          }
+
+          // 3. If on Menu or Home tab, go back to Rooster tab!
+          if (activeTabRef.current === 'menu' || activeTabRef.current === 'home') {
+            setActiveTab('schedule');
+            return;
+          }
+
+          // 4. Only if on the Schedule tab with no modal open, exit the app
+          CapApp.exitApp();
         });
-        if (res.recentMessages && res.recentMessages.length > 0) {
-          setRecentMessages(res.recentMessages);
+      } catch (err) {
+        console.warn('Capacitor App backButton listener inactive in web mode', err);
+      }
+    };
+
+    setupBackHandler();
+
+    return () => {
+      if (listenerHandle) {
+        listenerHandle.remove();
+      }
+    };
+  }, []);
+
+
+  // Helper to start the local Vrijcheck background poller
+  const startVrijcheckPoller = () => {
+    slackService.startPolling((event) => {
+      if (event.reactionSuccess) {
+        sounds.playSuccess();
+        confetti({
+          particleCount: 80,
+          spread: 70,
+          origin: { y: 0.6 }
+        });
+
+        setToast({
+          type: 'success',
+          title: '🎉 Vrijcheck Geslaagd!',
+          message: `Gereageerd met :${event.emoji}: (${event.latencyMs || 0}ms)`,
+          emoji: event.emoji
+        });
+
+        setHasUnreadReaction(true);
+        setShifts(slackService.getShifts());
+        setTimeout(() => setToast(null), 5000);
+      }
+    });
+  };
+
+
+  // Initialize Authentication & Standalone Services on launch
+  useEffect(() => {
+    let isMounted = true;
+
+    const initAuthAndServices = async () => {
+      setIsAuthChecking(true);
+      const initialShifts = slackService.getShifts();
+      const initialSettings = slackService.getSettings();
+      setShifts(initialShifts);
+      setSettings(initialSettings);
+      if (initialSettings.soundEnabled !== undefined) {
+        sounds.enabled = initialSettings.soundEnabled;
+      }
+
+      const token = initialSettings?.slackToken?.trim();
+
+      if (!token) {
+        if (isMounted) {
+          setIsAuthenticated(false);
+          setIsAuthChecking(false);
+        }
+        return;
+      }
+
+      try {
+        const res = await slackService.testConnection(initialSettings);
+        if (!isMounted) return;
+
+        if (res?.ok && res?.auth) {
+          setBotStatus({
+            status: 'connected',
+            authInfo: res.auth,
+            channelName: initialSettings.channelName,
+            channelId: initialSettings.channelId
+          });
+          if (res.recentMessages && res.recentMessages.length > 0) {
+            setRecentMessages(res.recentMessages);
+          }
+          setIsAuthenticated(true);
+          setAuthError(null);
+
+          // Start local background polling loop immediately!
+          startVrijcheckPoller();
+        } else {
+          // Token is revoked or session is expired
+          setIsAuthenticated(false);
+          setAuthError('Je Picnic Slack sessie is verlopen. Log opnieuw in om door te gaan.');
+        }
+      } catch (err) {
+        console.warn('Auth check error:', err);
+        if (isMounted) {
+          if (token) {
+            setIsAuthenticated(true);
+            startVrijcheckPoller();
+          } else {
+            setIsAuthenticated(false);
+            setAuthError('Geen geldige sessie gevonden.');
+          }
+        }
+      } finally {
+        if (isMounted) {
+          setIsAuthChecking(false);
         }
       }
-    }).catch(console.warn);
+    };
 
-    // 3. Listen to local status updates
+    initAuthAndServices();
+
+    // Listen to local status updates
     const unsub = slackService.onStatusChange((st) => {
       if (st?.authInfo) {
         setBotStatus((prev) => ({ ...prev, ...st }));
       }
     });
 
-    // 4. Connect to Socket.io backend if running
+    return () => {
+      isMounted = false;
+      unsub();
+      slackService.stopPolling();
+    };
+  }, []);
+
+  // Connect to Socket.io backend if running
+  useEffect(() => {
     let s = null;
+    const currentSettings = settings || slackService.getSettings();
+    const serverUrl = (currentSettings?.serverUrl || '').trim() || (
+      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        ? 'http://localhost:3001'
+        : '/'
+    );
+    const serverToken = (currentSettings?.serverToken || '').trim() || 'vrijcheck_secret_2026';
+
     try {
-      s = io(SOCKET_URL, {
+      s = io(serverUrl, {
         transports: ['websocket', 'polling'],
+        auth: { token: serverToken },
         timeout: 4000
       });
 
       s.on('connect', () => {
-        console.log('Connected to Vrijcheck backend');
+        console.log('[SOCKET] Verbonden met 24/7 Vrijcheck backend:', serverUrl);
+        setIsServerConnected(true);
+      });
+
+      s.on('disconnect', () => {
+        console.log('[SOCKET] Verbinding met 24/7 server verbroken');
+        setIsServerConnected(false);
+      });
+
+      s.on('connect_error', (err) => {
+        console.warn('[SOCKET] Fout bij verbinden met server:', err.message);
+        setIsServerConnected(false);
       });
 
       s.on('shifts:updated', (data) => {
@@ -156,13 +351,17 @@ export function App() {
 
       setSocket(s);
 
-      // Initial fetch fallback
-      fetch(`${SOCKET_URL}/api/shifts`)
+      const authHeaders = {
+        'x-api-key': serverToken
+      };
+
+      // Initial fetch with auth header
+      fetch(`${serverUrl}/api/shifts`, { headers: authHeaders })
         .then((r) => r.json())
         .then(setShifts)
         .catch(() => {});
 
-      fetch(`${SOCKET_URL}/api/settings`)
+      fetch(`${serverUrl}/api/settings`, { headers: authHeaders })
         .then((r) => r.json())
         .then((data) => {
           setSettings(data);
@@ -170,24 +369,26 @@ export function App() {
         })
         .catch(() => {});
 
-      fetch(`${SOCKET_URL}/api/status`)
+      fetch(`${serverUrl}/api/status`, { headers: authHeaders })
         .then((r) => r.json())
         .then(setBotStatus)
         .catch(() => {});
 
-      fetch(`${SOCKET_URL}/api/history`)
+      fetch(`${serverUrl}/api/history`, { headers: authHeaders })
         .then((r) => r.json())
         .then(setHistory)
         .catch(() => {});
     } catch (e) {
-      console.warn('Socket init warning:', e);
+      console.warn('Socket connection error:', e);
+      setIsServerConnected(false);
     }
 
     return () => {
-      unsub();
-      if (s) s.disconnect();
+      if (s) {
+        s.disconnect();
+      }
     };
-  }, []);
+  }, [settings?.serverUrl, settings?.serverToken]);
 
 
   // Compute 7 days of the currently viewed week (starts Monday)
@@ -204,48 +405,109 @@ export function App() {
   };
 
   const handleGoToToday = () => {
-    setCurrentDate(initialDate);
-    setSelectedDate(initialDate);
+    const today = new Date();
+    setCurrentDate(today);
+    setSelectedDate(today);
+    try { navigator.vibrate?.(15); } catch (_) {}
+    sounds.playPop?.();
+    setTimeout(() => {
+      const todayKey = format(today, 'yyyy-MM-dd');
+      const el = document.getElementById(`day-${todayKey}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 80);
   };
 
-  const handleOpenShiftModal = (date, blockId = null) => {
+  const handleSelectDateFromPicker = (date) => {
+    setCurrentDate(date);
+    setSelectedDate(date);
+    setIsDatePickerOpen(false);
+    setTimeout(() => {
+      const dateKey = format(date, 'yyyy-MM-dd');
+      const el = document.getElementById(`day-${dateKey}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 80);
+  };
+
+  const handleRefreshAll = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try { navigator.vibrate?.(15); } catch (_) {}
+    sounds.playPop?.();
+
+    try {
+      // 1. Refresh shifts from local storage
+      const refreshedShifts = slackService.getShifts();
+      setShifts(refreshedShifts);
+
+      // 2. Test Slack connection and fetch newest messages
+      const currentSettings = settings || slackService.getSettings();
+      const res = await slackService.testConnection(currentSettings);
+      if (res?.ok) {
+        if (res.auth) {
+          setBotStatus((prev) => ({
+            ...prev,
+            status: 'connected',
+            authInfo: res.auth,
+            channelName: currentSettings.channelName,
+            channelId: currentSettings.channelId
+          }));
+        }
+        if (res.recentMessages && res.recentMessages.length > 0) {
+          setRecentMessages(res.recentMessages);
+        }
+      }
+
+      setToast({
+        type: 'success',
+        title: 'Ververst!',
+        message: 'Rooster en Slack berichten zijn bijgewerkt.'
+      });
+      setTimeout(() => setToast(null), 3000);
+    } catch (err) {
+      console.warn('Refresh error:', err);
+      setToast({
+        type: 'info',
+        title: 'Ververst',
+        message: 'Lokale gegevens opnieuw geladen.'
+      });
+      setTimeout(() => setToast(null), 2500);
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 500);
+    }
+  };
+
+  const handleOpenShiftModal = (date, shift = null, blockId = 'M2') => {
     setModalDate(date);
-    setModalInitialBlock(blockId);
+    const dateKey = format(date, 'yyyy-MM-dd');
+    const targetShift = shift || getShiftForBlock(shifts, dateKey, blockId);
+    setModalCurrentShift(targetShift);
+    setModalShiftIndex(blockId);
     setIsModalOpen(true);
   };
 
-
   const handleSaveShift = async (shiftData) => {
     const dateKey = format(modalDate, 'yyyy-MM-dd');
-    const updated = {
-      ...shifts,
-      [dateKey]: shiftData
-    };
+    const blockId = shiftData.block || modalShiftIndex || 'M2';
+    const updated = saveShiftBlock(shifts, dateKey, blockId, shiftData);
     setShifts(updated);
+    setModalCurrentShift(shiftData);
     slackService.saveShifts(updated);
 
     try {
       await fetch(`${SOCKET_URL}/api/shifts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dateKey, shift: shiftData })
+        body: JSON.stringify({ dateKey, blockId, shift: shiftData })
       });
     } catch (err) {}
   };
 
-  const handleQuickToggleVrijcheck = async (dateKey) => {
-    const existing = shifts[dateKey];
-    if (!existing || existing.block === 'none') return;
-
-    const updatedShift = {
-      ...existing,
-      vrijcheckActive: existing.vrijcheckActive === false ? true : false
-    };
-
-    const updated = {
-      ...shifts,
-      [dateKey]: updatedShift
-    };
+  const handleQuickToggleVrijcheck = async (dateKey, blockId) => {
+    const updated = toggleVrijcheckForBlock(shifts, dateKey, blockId);
     setShifts(updated);
     slackService.saveShifts(updated);
 
@@ -253,7 +515,7 @@ export function App() {
       await fetch(`${SOCKET_URL}/api/shifts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dateKey, shift: updatedShift })
+        body: JSON.stringify({ dateKey, blockId, shift: updated[dateKey]?.[blockId] })
       });
     } catch (err) {}
   };
@@ -361,8 +623,87 @@ export function App() {
   };
 
 
+  const handleLoginSuccess = async (newCredentials) => {
+    const merged = slackService.saveSettings(newCredentials);
+    setSettings(merged);
+    setIsAuthChecking(true);
+    setAuthError(null);
+
+    try {
+      const res = await slackService.testConnection(merged);
+      if (res?.ok && res?.auth) {
+        setBotStatus({
+          status: 'connected',
+          authInfo: res.auth,
+          channelName: merged.channelName,
+          channelId: merged.channelId
+        });
+        if (res.recentMessages && res.recentMessages.length > 0) {
+          setRecentMessages(res.recentMessages);
+        }
+        setIsAuthenticated(true);
+        setActiveTab('home');
+        startVrijcheckPoller();
+
+        setToast({
+          type: 'success',
+          title: 'Ingelogd!',
+          message: `Welkom ${res.auth.user || 'Runner'}! Vrijcheck is nu actief.`
+        });
+        setTimeout(() => setToast(null), 4000);
+      } else {
+        throw new Error(res?.error || 'Sessie kon niet worden geverifieerd');
+      }
+    } catch (err) {
+      setIsAuthenticated(false);
+      setAuthError(err.message || 'Kon verbinding niet verifiëren');
+    } finally {
+      setIsAuthChecking(false);
+    }
+  };
+
+  const handleLogout = () => {
+    slackService.stopPolling();
+    const cleared = slackService.logout();
+    setSettings(cleared);
+    setBotStatus({
+      status: 'disconnected',
+      hasToken: false,
+      hasCookie: false,
+      channelName: '#nl-dist-runners-hlm'
+    });
+    setRecentMessages([]);
+    setIsAuthenticated(false);
+    setAuthError('Je bent uitgelogd van Slack.');
+  };
+
+  // 1. Splash loader during initial session check
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen h-[100dvh] bg-[#0c0d11] text-white flex flex-col items-center justify-center space-y-4 select-none">
+        <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-[#e11d48] to-[#9f1239] flex items-center justify-center shadow-2xl shadow-red-500/30 animate-pulse border border-red-400/30">
+          <Zap className="w-8 h-8 text-white fill-white" />
+        </div>
+        <div className="text-center">
+          <h2 className="text-base font-bold tracking-tight">Picnic Teamwork • Vrijcheck</h2>
+          <p className="text-xs text-neutral-400 mt-1">Sessie controleren...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Authentication Gate: If not logged in or session expired, show LoginView!
+  if (!isAuthenticated) {
+    return (
+      <LoginView
+        onLoginSuccess={handleLoginSuccess}
+        initialError={authError}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#0a0a0c] text-neutral-100 flex flex-col items-center justify-center p-0 md:p-6 select-none font-sans">
+    <div className="min-h-screen h-[100dvh] bg-[#0a0a0c] text-neutral-100 flex flex-col items-center justify-start md:justify-center p-0 md:p-6 select-none font-sans overflow-hidden">
       {/* Desktop Top Toolbar (Frame Toggle & Info) */}
       <div className="hidden md:flex items-center justify-between w-full max-w-md mb-3 px-2">
         <div className="flex items-center gap-2">
@@ -402,10 +743,10 @@ export function App() {
 
       {/* Main Container / Mobile Device Wrapper */}
       <main
-        className={`w-full bg-[#141416] transition-all relative flex flex-col overflow-hidden ${
+        className={`w-full bg-[#141416] transition-all relative flex flex-col overflow-hidden h-[100dvh] ${
           isDeviceFrame
-            ? 'max-w-[420px] md:h-[860px] md:rounded-[44px] md:border-[10px] md:border-[#2b2c34] md:shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)]'
-            : 'max-w-2xl min-h-screen md:min-h-[860px] md:rounded-3xl md:border md:border-[#2b2c34]'
+            ? 'w-full md:max-w-[420px] md:h-[860px] md:rounded-[44px] md:border-[10px] md:border-[#2b2c34] md:shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)]'
+            : 'w-full md:max-w-2xl md:min-h-[860px] md:rounded-3xl md:border md:border-[#2b2c34]'
         }`}
       >
         {/* Dynamic Island / Mobile Notch on Desktop Frame */}
@@ -444,15 +785,35 @@ export function App() {
         )}
 
         {/* Content based on active tab */}
+        {activeTab === 'home' && (
+          <div className="flex-1 overflow-y-auto pt-3.5 sm:pt-4">
+            <HomeView
+              onNavigate={(tab) => setActiveTab(tab)}
+              botStatus={botStatus}
+              shifts={shifts}
+              currentDate={currentDate}
+              onTestReaction={() => handleTestRealReaction('3-red')}
+            />
+          </div>
+        )}
+
         {activeTab === 'schedule' && (
           <>
             <Header
               currentDate={currentDate}
+              onSelectDate={(newDate) => {
+                setCurrentDate(newDate);
+                setSelectedDate(newDate);
+              }}
               onGoToToday={handleGoToToday}
+              onOpenDatePicker={() => setIsDatePickerOpen(true)}
               onPrevWeek={handlePrevWeek}
               onNextWeek={handleNextWeek}
+              onRefresh={handleRefreshAll}
+              isRefreshing={isRefreshing}
               weekNumber={weekNumber}
               isLiveBotActive={botStatus?.status === 'polling'}
+              isServerConnected={isServerConnected}
             />
 
             <div className="flex-1 overflow-y-auto">
@@ -463,17 +824,40 @@ export function App() {
                 shifts={shifts}
                 onOpenShiftModal={handleOpenShiftModal}
                 onToggleVrijcheck={handleQuickToggleVrijcheck}
+                onPrevWeek={handlePrevWeek}
+                onNextWeek={handleNextWeek}
               />
             </div>
           </>
         )}
 
+        {activeTab === 'menu' && (
+          <div className="flex-1 overflow-y-auto pt-3.5 sm:pt-4">
+            <MenuView
+              onNavigate={(tab) => setActiveTab(tab)}
+              onLogout={handleLogout}
+              botStatus={botStatus}
+              settings={settings}
+              isServerConnected={isServerConnected}
+            />
+          </div>
+        )}
+
         {activeTab === 'live' && (
-          <div className="flex-1 overflow-y-auto pt-2">
+          <div className="flex-1 overflow-y-auto pt-3.5 sm:pt-4">
             <div className="px-4 py-2 border-b border-[#22242a] flex items-center justify-between">
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <span>Slack Live Monitor</span>
-              </h2>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('menu')}
+                  className="py-1.5 px-3 -ml-2 rounded-xl text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors flex items-center gap-1 text-xs font-bold active:scale-95 touch-manipulation cursor-pointer"
+                >
+                  <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
+                  <span>Menu</span>
+                </button>
+                <span className="text-neutral-600">|</span>
+                <h2 className="text-sm font-bold text-white">Slack Live Monitor</h2>
+              </div>
               <span className="text-xs text-neutral-400 font-mono">#nl-dist-runners-hlm</span>
             </div>
             <SlackLiveView
@@ -491,10 +875,20 @@ export function App() {
         )}
 
         {activeTab === 'settings' && (
-          <div className="flex-1 overflow-y-auto pt-2">
-            <div className="px-4 py-2 border-b border-[#22242a]">
-              <h2 className="text-base font-bold text-white">Instellingen &amp; Sessie</h2>
-              <p className="text-xs text-neutral-400">Picnic Enterprise Slack sessie &amp; blokken</p>
+          <div className="flex-1 overflow-y-auto pt-3.5 sm:pt-4">
+            <div className="px-4 py-2 border-b border-[#22242a] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('menu')}
+                  className="py-1.5 px-3 -ml-2 rounded-xl text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors flex items-center gap-1 text-xs font-bold active:scale-95 touch-manipulation cursor-pointer"
+                >
+                  <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
+                  <span>Menu</span>
+                </button>
+                <span className="text-neutral-600">|</span>
+                <h2 className="text-sm font-bold text-white">Instellingen &amp; Sessie</h2>
+              </div>
             </div>
             <SettingsView
               settings={settings}
@@ -510,11 +904,18 @@ export function App() {
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           date={modalDate}
-          currentShift={shifts[format(modalDate, 'yyyy-MM-dd')]}
-          initialBlock={modalInitialBlock}
+          currentShift={modalCurrentShift}
+          shiftIndex={modalShiftIndex}
           onSaveShift={handleSaveShift}
         />
 
+        {/* Date Picker Modal */}
+        <DatePickerModal
+          isOpen={isDatePickerOpen}
+          onClose={() => setIsDatePickerOpen(false)}
+          selectedDate={selectedDate}
+          onSelectDate={handleSelectDateFromPicker}
+        />
 
         {/* Bottom Navigation Bar */}
         <BottomNav

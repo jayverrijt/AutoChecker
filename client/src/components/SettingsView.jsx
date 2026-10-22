@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Browser } from '@capacitor/browser';
 import { registerPlugin, Capacitor } from '@capacitor/core';
+import { slackService } from '../services/slackService';
 
 const SlackAuth = registerPlugin('SlackAuth');
 import { 
@@ -24,7 +25,11 @@ import {
   ChevronDown,
   ChevronUp,
   User,
-  LogIn
+  LogIn,
+  Server,
+  Zap,
+  Activity,
+  HardDrive
 } from 'lucide-react';
 import { SlackEmoji } from './SlackEmoji';
 import { sounds } from '../utils/audio';
@@ -45,6 +50,8 @@ export const SettingsView = ({
     autoReact: true,
     pollIntervalMs: 1000,
     soundEnabled: true,
+    serverUrl: '',
+    serverToken: 'vrijcheck_secret_2026',
     emojiMapping: {
       M1: '1-red',
       M2: '2-red',
@@ -61,6 +68,13 @@ export const SettingsView = ({
   const [showHelper, setShowHelper] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState(false);
+
+  // 24/7 Server state
+  const [isTestingServer, setIsTestingServer] = useState(false);
+  const [serverTestResult, setServerTestResult] = useState(null);
+  const [isEmulating, setIsEmulating] = useState(false);
+  const [emulationResult, setEmulationResult] = useState(null);
+  const [emulatePeriod, setEmulatePeriod] = useState('OCHTEND');
 
   const handleOpenSlackLogin = async () => {
     const url = formData.workspaceUrl || 'https://picnic.enterprise.slack.com';
@@ -158,6 +172,44 @@ export const SettingsView = ({
       setTestResult({ ok: false, error: err.message });
     } finally {
       setIsTesting(false);
+    }
+  };
+
+  const handleTestServerConnection = async () => {
+    setIsTestingServer(true);
+    setServerTestResult(null);
+    try {
+      await onSaveSettings(formData);
+      const res = await slackService.testServerConnection(formData.serverUrl, formData.serverToken);
+      setServerTestResult(res);
+      if (res?.ok) {
+        sounds.playSuccess();
+      }
+    } catch (err) {
+      setServerTestResult({ ok: false, error: err.message });
+    } finally {
+      setIsTestingServer(false);
+    }
+  };
+
+  const handleRunEmulation = async () => {
+    setIsEmulating(true);
+    setEmulationResult(null);
+    try {
+      await onSaveSettings(formData);
+      const res = await slackService.emulateOnServer(formData.serverUrl, formData.serverToken, {
+        period: emulatePeriod,
+        minDelayMs: 40,
+        maxDelayMs: 160
+      });
+      setEmulationResult(res);
+      if (res?.ok && res?.emulation?.benchmark?.reactionSuccess) {
+        sounds.playSuccess();
+      }
+    } catch (err) {
+      setEmulationResult({ ok: false, error: err.message });
+    } finally {
+      setIsEmulating(false);
     }
   };
 
@@ -452,6 +504,173 @@ export const SettingsView = ({
               )}
             </div>
           )}
+        </div>
+
+        {/* 24/7 Webserver & Cloud Daemon Card */}
+        <div className="bg-[#1a1b20] border border-[#272832] rounded-2xl p-4 shadow-sm space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                <Server className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <span>24/7 Webserver &amp; Cloud Daemon</span>
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    AANBEVOLEN
+                  </span>
+                </h3>
+                <p className="text-[11px] text-neutral-400">
+                  Laat de server 24/7 luisteren — telefoon mag uitstaan om 10:10 &amp; 17:10
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3 pt-1">
+            {/* Server URL */}
+            <div>
+              <label className="text-xs text-neutral-300 font-semibold block mb-1">
+                Webserver URL
+              </label>
+              <div className="flex items-center gap-1.5 bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white">
+                <HardDrive className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                <input
+                  type="text"
+                  value={formData.serverUrl}
+                  onChange={(e) => handleChange('serverUrl', e.target.value)}
+                  placeholder="bijv. http://192.168.1.150:3001 of cloud URL (leeg = lokaal)"
+                  className="bg-transparent outline-none w-full font-mono text-xs placeholder:text-neutral-500"
+                />
+              </div>
+            </div>
+
+            {/* Server Token */}
+            <div>
+              <label className="text-xs text-neutral-300 font-semibold block mb-1">
+                Server Authenticatie Token (<code className="text-blue-300 font-mono">SERVER_API_KEY</code>)
+              </label>
+              <div className="flex items-center gap-1.5 bg-[#22242c] border border-[#2e303c] rounded-xl px-3 py-2 text-xs text-white">
+                <Key className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                <input
+                  type="password"
+                  value={formData.serverToken}
+                  onChange={(e) => handleChange('serverToken', e.target.value)}
+                  placeholder="vrijcheck_secret_2026"
+                  className="bg-transparent outline-none w-full font-mono text-xs placeholder:text-neutral-500"
+                />
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleTestServerConnection}
+                disabled={isTestingServer}
+                className="py-2.5 px-3 bg-[#272a35] hover:bg-[#303442] active:scale-[0.99] border border-[#3b3f52] rounded-xl text-xs font-bold text-white flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
+              >
+                {isTestingServer ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Activity className="w-3.5 h-3.5 text-blue-400" />
+                )}
+                <span>Test Server</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRunEmulation}
+                disabled={isEmulating}
+                className="py-2.5 px-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 active:scale-[0.99] text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all disabled:opacity-50"
+              >
+                {isEmulating ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Zap className="w-3.5 h-3.5 text-amber-300 fill-amber-300" />
+                )}
+                <span>Emuleer Post</span>
+              </button>
+            </div>
+
+            {/* Emulation Shift toggle */}
+            <div className="flex items-center justify-between bg-[#14151b] p-2 rounded-xl border border-[#22242f] text-xs">
+              <span className="text-neutral-400 text-[11px]">Emulatie Shift Periode:</span>
+              <div className="flex gap-1">
+                {['OCHTEND', 'MIDDAG'].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setEmulatePeriod(p)}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                      emulatePeriod === p
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-[#1e2029] text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Server test result feedback */}
+            {serverTestResult && (
+              <div
+                className={`p-3 rounded-xl border text-xs space-y-1 animate-fadeIn ${
+                  serverTestResult.ok
+                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+                    : 'bg-red-950/40 border-red-500/40 text-red-200'
+                }`}
+              >
+                <div className="font-bold flex items-center gap-1.5">
+                  {serverTestResult.ok ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>{serverTestResult.message || 'Verbonden met 24/7 webserver!'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                      <span>{serverTestResult.error}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Emulation result benchmark feedback */}
+            {emulationResult && (
+              <div className="p-3 rounded-xl border bg-[#141620] border-blue-500/40 text-xs space-y-2 animate-fadeIn">
+                <div className="flex items-center justify-between font-bold text-white">
+                  <div className="flex items-center gap-1.5 text-blue-300">
+                    <Zap className="w-4 h-4 text-amber-400 fill-amber-400" />
+                    <span>DayPlanner Emulatie Resultaat</span>
+                  </div>
+                  {emulationResult.emulation?.benchmark?.reactionProcessingMs && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-black border border-emerald-500/40">
+                      ⚡ {emulationResult.emulation.benchmark.reactionProcessingMs}ms latency
+                    </span>
+                  )}
+                </div>
+
+                <div className="text-[11px] text-neutral-300 space-y-1 pl-1">
+                  {emulationResult.emulation?.benchmark?.reactionSuccess ? (
+                    <div className="text-emerald-300 font-medium">
+                      ✓ Reactie <strong>:{emulationResult.emulation.benchmark.emoji}:</strong> geplaatst voor shift <strong>{emulationResult.emulation.benchmark.matchedShift}</strong>!
+                    </div>
+                  ) : (
+                    <div className="text-amber-300">
+                      ℹ {emulationResult.emulation?.benchmark?.reason || 'Geen reactie vereist (geen actieve shift gevonden)'}
+                    </div>
+                  )}
+                  <div className="text-neutral-400 font-mono text-[10px]">
+                    Netwerk jitter: {emulationResult.emulation?.benchmark?.simulatedJitterMs || 0}ms • Totale doorlooptijd: {emulationResult.emulation?.benchmark?.totalReactionTimeMs || 0}ms
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Collapsible Advanced / Manual Tokens Section */}

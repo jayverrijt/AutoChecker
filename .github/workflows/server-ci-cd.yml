@@ -1,0 +1,91 @@
+name: Server CI/CD & Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'server/**'
+      - '.github/workflows/server-ci-cd.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'server/**'
+  workflow_dispatch:
+
+jobs:
+  test-server:
+    name: Run Automated Tests & Benchmark
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: 'server/package-lock.json'
+
+      - name: Install Server Dependencies
+        run: |
+          cd server
+          npm ci
+
+      - name: Run Testsuite (Security, Matching & DayPlanner Emulation)
+        run: |
+          cd server
+          NODE_ENV=test npm test
+
+  deploy-server:
+    name: Deploy to 24/7 Server (FleetHub / VPS)
+    needs: test-server
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH to FleetHub Server
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          SSH_KEY: ${{ secrets.FLEETHUB_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.FLEETHUB_HOST || secrets.SERVER_HOST }}
+          USER: ${{ secrets.FLEETHUB_USER || secrets.SERVER_USER || 'root' }}
+          PORT: ${{ secrets.FLEETHUB_PORT || secrets.SERVER_PORT || '22' }}
+          TARGET_DIR: ${{ secrets.FLEETHUB_DEPLOY_PATH || secrets.SERVER_PATH || '/var/www/autochecker' }}
+        if: env.SSH_KEY != '' && env.HOST != ''
+        with:
+          host: ${{ env.HOST }}
+          username: ${{ env.USER }}
+          key: ${{ env.SSH_KEY }}
+          port: ${{ env.PORT }}
+          envs: TARGET_DIR
+          script: |
+            echo "🚀 Deploying AutoChecker 24/7 Webserver to $TARGET_DIR..."
+            if [ ! -d "$TARGET_DIR" ]; then
+              mkdir -p "$TARGET_DIR"
+              git clone https://github.com/jayverrijt/AutoChecker.git "$TARGET_DIR"
+            fi
+            cd "$TARGET_DIR"
+            git fetch origin main
+            git reset --hard origin/main
+            
+            cd server
+            npm ci --only=production
+
+            # Reload PM2 daemon if installed, otherwise start
+            if command -v pm2 >/dev/null 2>&1; then
+              pm2 reload ecosystem.config.cjs --update-env || pm2 start ecosystem.config.cjs
+              pm2 save
+              echo "✅ PM2 process reloaded successfully!"
+            elif [ -f "../docker-compose.yml" ] && command -v docker >/dev/null 2>&1; then
+              docker compose up -d --build
+              echo "✅ Docker container restarted successfully!"
+            else
+              echo "⚠️ Neither PM2 nor Docker found. Please configure process manager on target host."
+            fi

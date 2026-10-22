@@ -34,43 +34,8 @@ const DEFAULT_SETTINGS = {
   simulationMode: false
 };
 
-// Initial default shifts for demonstration (current week / month)
-const DEFAULT_SHIFTS = {
-  // Key format: YYYY-MM-DD
-  '2026-10-17': {
-    block: 'S1', // S1 -> :1-red:
-    startTime: '13:00',
-    endTime: '21:30',
-    vrijcheckActive: true,
-    reactionStatus: null
-  },
-  '2026-10-18': {
-    block: 'M1', // M1 -> :1-red:
-    startTime: '06:30',
-    endTime: '15:00',
-    vrijcheckActive: true,
-    reactionStatus: null
-  },
-  '2026-10-19': {
-    block: 'S2', // S2 -> :2-red:
-    startTime: '14:00',
-    endTime: '22:30',
-    vrijcheckActive: true,
-    reactionStatus: null
-  },
-  '2026-10-20': {
-    block: 'none',
-    vrijcheckActive: false,
-    reactionStatus: null
-  },
-  '2026-10-21': {
-    block: 'S3', // S3 -> :3-red:
-    startTime: '16:30',
-    endTime: '23:00',
-    vrijcheckActive: true,
-    reactionStatus: null
-  }
-};
+// Initial default shifts (empty by default; user explicitly sets shifts)
+const DEFAULT_SHIFTS = {};
 
 function readJsonFile(file, defaultData) {
   try {

@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { DayPlannerEmulator } from './emulator.js';
 
 export class SlackBotManager {
   constructor(io) {
@@ -12,6 +13,7 @@ export class SlackBotManager {
     this.lastActivity = null;
     this.authInfo = null;
     this.recentChannelMessages = [];
+    this.emulator = new DayPlannerEmulator(this);
 
     // Load history of processed messages so we don't double react on server reboot
     const history = db.getHistory();
@@ -322,27 +324,27 @@ export class SlackBotManager {
     const m = now.getMinutes();
     const s = now.getSeconds();
 
-    // 17:10 window (17:09:45 - 17:11:15) for morning shifts
-    if (h === 17 && (m === 10 || (m === 9 && s >= 45) || (m === 11 && s <= 15))) {
-      return { active: true, target: '17:10', period: 'OCHTEND' };
+    // 17:10 window (17:09:40 - 17:12:00) for morning shifts (seconds vary: :19, :28, etc.)
+    if (h === 17 && (m === 10 || m === 11 || (m === 9 && s >= 40))) {
+      return { active: true, target: '17:10', period: 'OCHTEND', delayMs: 400 };
     }
-    // 10:10 window (10:09:45 - 10:11:15) for afternoon shifts
-    if (h === 10 && (m === 10 || (m === 9 && s >= 45) || (m === 11 && s <= 15))) {
-      return { active: true, target: '10:10', period: 'MIDDAG' };
+    // 10:10 window (10:09:40 - 10:12:00) for afternoon shifts (seconds vary: :19, :28, :00)
+    if (h === 10 && (m === 10 || m === 11 || (m === 9 && s >= 40))) {
+      return { active: true, target: '10:10', period: 'MIDDAG', delayMs: 400 };
     }
-    return { active: false };
+    return { active: false, delayMs: 1000 };
   }
 
   startPolling() {
     this.stopPolling();
     this.isPolling = true;
     const settings = db.getSettings();
-    this.log('info', `Lokale monitor actief voor #${settings.channelName} (Smart 17:10 & 10:10 luister-engine)`);
+    this.log('info', `24/7 Slack luister-engine actief voor #${settings.channelName} (Smart 17:10 & 10:10 venster)`);
 
     const loop = async () => {
       if (!this.isPolling) return;
       const windowCheck = this.isCriticalWindow();
-      const delay = windowCheck.active ? 500 : Math.max(800, settings.pollIntervalMs || 1000);
+      const delay = windowCheck.active ? (windowCheck.delayMs || 400) : Math.max(800, settings.pollIntervalMs || 1000);
 
       await this.pollChannelMessages();
 
@@ -403,28 +405,18 @@ export class SlackBotManager {
    * Parse message text to extract Date (DD-MM-YYYY), Shift Period (OCHTEND | MIDDAG | AVOND),
    * and surplus (Overschotten Shift 1 / Shift 2 / Shift 3)
    */
-  parsePlannerMessage(text, username = '') {
+  parsePlannerMessage(text, username = '', userId = '') {
     if (!text) return null;
 
     const senderMatch = username.toLowerCase().includes('day-plan') || 
                         username.toLowerCase().includes('planning') ||
+                        userId === 'U062ALTD6DQ' ||
                         text.includes('Graag voor') ||
                         text.includes('Overschotten') ||
                         text.includes('Check je vrij') ||
+                        text.includes('*OCHTEND') ||
+                        text.includes('*MIDDAG') ||
                         text.includes('HLM Planning');
-
-    const dateMatch = text.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/);
-    let parsedDate = null;
-    let isoDate = null;
-
-    if (dateMatch) {
-      let day = dateMatch[1].padStart(2, '0');
-      let month = dateMatch[2].padStart(2, '0');
-      let year = dateMatch[3];
-      if (year.length === 2) year = '20' + year;
-      parsedDate = `${day}-${month}-${year}`;
-      isoDate = `${year}-${month}-${day}`;
-    }
 
     let period = null;
     if (/MIDDAG/i.test(text)) {
@@ -433,6 +425,20 @@ export class SlackBotManager {
       period = 'OCHTEND';
     } else if (/AVOND/i.test(text)) {
       period = 'AVOND';
+    }
+
+    // Match DD-MM-YYYY or DD-MM or DD/MM/YYYY or DD/MM
+    const dateMatch = text.match(/\b(\d{1,2})[-/](\d{1,2})(?:[-/](\d{2,4}))?\b/);
+    let parsedDate = null;
+    let isoDate = null;
+
+    if (dateMatch) {
+      let day = dateMatch[1].padStart(2, '0');
+      let month = dateMatch[2].padStart(2, '0');
+      let year = dateMatch[3] || String(new Date().getFullYear());
+      if (year.length === 2) year = '20' + year;
+      parsedDate = `${day}-${month}-${year}`;
+      isoDate = `${year}-${month}-${day}`;
     }
 
     const overschotten = {};
@@ -444,7 +450,7 @@ export class SlackBotManager {
     if (overschotShift3) overschotten.shift3 = parseInt(overschotShift3[1], 10);
 
     return {
-      isPlannerMessage: senderMatch || Boolean(parsedDate && period),
+      isPlannerMessage: Boolean(senderMatch || (parsedDate && period)),
       parsedDate,
       isoDate,
       period,
@@ -466,13 +472,78 @@ export class SlackBotManager {
   }
 
   /**
+   * Resolves all active blocks for a given date that match the shift period
+   * (supporting 5-block dictionary, array, and legacy single object formats)
+   */
+  resolveTargetShiftBlocks(targetDateIso, period) {
+    const allShifts = db.getShifts();
+    const dayData = allShifts[targetDateIso];
+    if (!dayData) return [];
+
+    const candidateBlockIds = period === 'OCHTEND'
+      ? ['M1', 'M2']
+      : period === 'MIDDAG'
+        ? ['S1', 'S2', 'S3']
+        : ['M1', 'M2', 'S1', 'S2', 'S3'];
+
+    const matchedBlocks = [];
+
+    // Format 1: 5-block dictionary { M1: { vrijcheckActive: true }, M2: ... }
+    for (const bId of candidateBlockIds) {
+      const blockObj = dayData[bId];
+      if (blockObj && typeof blockObj === 'object') {
+        if (blockObj.vrijcheckActive === true) {
+          matchedBlocks.push({ blockId: bId, details: blockObj });
+        }
+      }
+    }
+
+    // Format 2: Array of shifts [ { block: 'M1', vrijcheckActive: true }, ... ]
+    if (matchedBlocks.length === 0 && Array.isArray(dayData)) {
+      for (const item of dayData) {
+        if (item && candidateBlockIds.includes(item.block) && item.vrijcheckActive === true) {
+          matchedBlocks.push({ blockId: item.block, details: item });
+        }
+      }
+    }
+
+    // Format 3: Single shift object { block: 'M1', vrijcheckActive: true }
+    if (matchedBlocks.length === 0 && dayData.block && candidateBlockIds.includes(dayData.block)) {
+      if (dayData.vrijcheckActive === true) {
+        matchedBlocks.push({ blockId: dayData.block, details: dayData });
+      }
+    }
+
+    return matchedBlocks;
+  }
+
+  /**
+   * Check if any shift exists on this day for the period, even if vrijcheck is disabled
+   */
+  hasAnyShiftForPeriod(targetDateIso, period) {
+    const allShifts = db.getShifts();
+    const dayData = allShifts[targetDateIso];
+    if (!dayData) return false;
+    const candidateBlockIds = period === 'OCHTEND' ? ['M1', 'M2'] : ['S1', 'S2', 'S3'];
+
+    for (const bId of candidateBlockIds) {
+      if (dayData[bId]) return true;
+    }
+    if (Array.isArray(dayData)) {
+      return dayData.some(item => candidateBlockIds.includes(item?.block));
+    }
+    if (dayData.block && candidateBlockIds.includes(dayData.block)) return true;
+    return false;
+  }
+
+  /**
    * Process message and trigger real or simulated Slack reaction
    */
   async processMessage(msg, isSimulation = false) {
     const settings = db.getSettings();
     const text = msg.text || '';
     const username = msg.username || msg.user || '';
-    const parsed = this.parsePlannerMessage(text, username);
+    const parsed = this.parsePlannerMessage(text, username, msg.user);
 
     if (!parsed || !parsed.isPlannerMessage) {
       return null;
@@ -481,10 +552,15 @@ export class SlackBotManager {
     this.log('info', `Day-Planning-Sender bericht gedetecteerd! Datum: ${parsed.parsedDate || 'onbekend'}, Blok: ${parsed.period || 'onbekend'}`);
 
     const targetDateIso = parsed.isoDate || new Date().toISOString().split('T')[0];
-    const userShift = db.getShiftForDate(targetDateIso);
+    const activeBlocks = this.resolveTargetShiftBlocks(targetDateIso, parsed.period);
 
-    if (!userShift || userShift.block === 'none') {
-      const reason = `Geen actieve shift in jouw rooster voor ${targetDateIso}. Geen reactie nodig.`;
+    // Case 1: No active shifts with vrijcheck enabled for this period
+    if (activeBlocks.length === 0) {
+      const hasAnyShift = this.hasAnyShiftForPeriod(targetDateIso, parsed.period);
+      const reason = hasAnyShift
+        ? `Vrijcheck staat UIT voor de shifts op ${targetDateIso} (${parsed.period}). Geen reactie verzonden.`
+        : `Geen actieve shift in jouw rooster voor ${parsed.period} op ${targetDateIso}.`;
+
       this.log('info', reason);
       
       const record = {
@@ -493,184 +569,135 @@ export class SlackBotManager {
         period: parsed.period,
         matchedShift: null,
         reactionSuccess: false,
-        status: 'no_shift',
+        status: hasAnyShift ? 'vrijcheck_disabled' : 'no_shift',
         reason,
         latencyMs: 0
       };
       db.addHistoryItem(record);
       this.processedMessageIds.add(msg.ts);
-      this.io.emit('bot:reaction_event', record);
-      return record;
-    }
-
-    const block = userShift.block;
-    let isPeriodMatch = true;
-
-    if (parsed.period === 'OCHTEND' && !['M1', 'M2'].includes(block)) {
-      isPeriodMatch = false;
-    } else if (parsed.period === 'MIDDAG' && !['S1', 'S2', 'S3'].includes(block)) {
-      isPeriodMatch = false;
-    }
-
-    if (!isPeriodMatch) {
-      const reason = `Bericht is voor ${parsed.period}, maar je rooster heeft ${block}. Geen match.`;
-      this.log('warning', reason);
-      const record = {
-        messageTs: msg.ts,
-        messageDate: parsed.parsedDate || targetDateIso,
-        period: parsed.period,
-        matchedShift: block,
-        reactionSuccess: false,
-        status: 'period_mismatch',
-        reason,
-        latencyMs: 0
-      };
-      db.addHistoryItem(record);
-      this.processedMessageIds.add(msg.ts);
-      this.io.emit('bot:reaction_event', record);
-      return record;
-    }
-
-    if (userShift.vrijcheckActive === false) {
-      const reason = `Vrijcheck staat UIT voor ${block} op ${targetDateIso}.`;
-      this.log('info', reason);
-      const record = {
-        messageTs: msg.ts,
-        messageDate: parsed.parsedDate || targetDateIso,
-        period: parsed.period,
-        matchedShift: block,
-        reactionSuccess: false,
-        status: 'vrijcheck_disabled',
-        reason,
-        latencyMs: 0
-      };
-      db.addHistoryItem(record);
-      this.processedMessageIds.add(msg.ts);
-      this.io.emit('bot:reaction_event', record);
-      return record;
-    }
-
-    const emojiName = this.getEmojiForShiftBlock(block);
-    if (!emojiName) {
-      this.log('error', `Kon geen emoji vinden voor shift block ${block}`);
-      return null;
-    }
-
-    this.log('info', `Shift match! Datum: ${targetDateIso}, Blok: ${block} ➜ Reageren met :${emojiName}:...`);
-
-    const startTime = Date.now();
-    let reactionSuccess = false;
-    let errorDetail = null;
-
-    if (isSimulation) {
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 100) + 120));
-      reactionSuccess = true;
-      this.log('success', `[SIMULATIE] Reactie :${emojiName}: geplaatst!`);
-    } else {
-      try {
-        const res = await this.callSlackApi('reactions.add', {
-          channel: this.resolvedChannelId || settings.channelId,
-          timestamp: msg.ts,
-          name: emojiName
-        });
-
-        if (res.ok) {
-          reactionSuccess = true;
-          this.log('success', `Echte Slack reactie :${emojiName}: succesvol geplaatst op Picnic Slack!`);
-        } else if (res.error === 'already_reacted') {
-          reactionSuccess = true;
-          this.log('info', `Je had al eerder gereageerd met :${emojiName}: op dit bericht.`);
-        } else {
-          reactionSuccess = false;
-          errorDetail = res.error || 'Onbekende fout';
-          this.log('error', `Slack reactie mislukt met fout: ${errorDetail}`);
-        }
-      } catch (err) {
-        reactionSuccess = false;
-        errorDetail = err.message;
-        this.log('error', `Verbindingsfout tijdens reactie: ${errorDetail}`);
+      if (this.io) {
+        this.io.emit('bot:reaction_event', record);
       }
+      return record;
     }
 
-    const latencyMs = Date.now() - startTime;
-    this.processedMessageIds.add(msg.ts);
+    // Case 2: One or more matching shift blocks have vrijcheckActive === true!
+    const results = [];
+    const allShifts = db.getShifts();
+    const dayData = allShifts[targetDateIso] || {};
 
-    const reactionStatus = {
-      success: reactionSuccess,
-      emoji: emojiName,
-      timestamp: new Date().toISOString(),
-      latencyMs,
-      messageTs: msg.ts,
-      period: parsed.period,
-      error: errorDetail
-    };
+    for (const { blockId } of activeBlocks) {
+      const emojiName = this.getEmojiForShiftBlock(blockId);
+      if (!emojiName) {
+        this.log('error', `Geen emoji mapping gevonden voor ${blockId}`);
+        continue;
+      }
 
-    const updatedShifts = db.updateShift(targetDateIso, {
-      reactionStatus
-    });
+      this.log('info', `🎯 SHIFT MATCH! Datum: ${targetDateIso}, Blok: ${blockId} ➜ Bliksemsnel reageren met :${emojiName}:...`);
+      const startTime = performance.now();
+      let reactionSuccess = false;
+      let errorDetail = null;
 
-    const historyItem = {
-      messageTs: msg.ts,
-      messageDate: parsed.parsedDate || targetDateIso,
-      period: parsed.period,
-      matchedShift: block,
-      emoji: emojiName,
-      reactionSuccess,
-      latencyMs,
-      status: reactionSuccess ? 'success' : 'error',
-      details: reactionSuccess 
-        ? `Succesvol gereageerd met :${emojiName}: op ${parsed.period || ''} bericht (${latencyMs}ms latency)` 
-        : `Mislukt om te reageren met :${emojiName}:: ${errorDetail}`,
-      isSimulation
-    };
-    db.addHistoryItem(historyItem);
+      if (isSimulation) {
+        // Fast realistic reaction time in simulation (~80-140ms)
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 60) + 80));
+        reactionSuccess = true;
+        this.log('success', `[SIMULATIE] Reactie :${emojiName}: geplaatst voor ${blockId}!`);
+      } else {
+        try {
+          const res = await this.callSlackApi('reactions.add', {
+            channel: this.resolvedChannelId || settings.channelId,
+            timestamp: msg.ts,
+            name: emojiName
+          });
 
-    this.io.emit('bot:reaction_event', historyItem);
-    this.io.emit('shifts:updated', updatedShifts);
+          if (res.ok) {
+            reactionSuccess = true;
+            this.log('success', `🚀 Echte Slack reactie :${emojiName}: geplaatst op Picnic Slack voor ${blockId}!`);
+          } else if (res.error === 'already_reacted') {
+            reactionSuccess = true;
+            this.log('info', `Je had al eerder gereageerd met :${emojiName}: op dit bericht.`);
+          } else {
+            reactionSuccess = false;
+            errorDetail = res.error || 'Onbekende fout';
+            this.log('error', `Slack reactie mislukt met fout: ${errorDetail}`);
+          }
+        } catch (err) {
+          reactionSuccess = false;
+          errorDetail = err.message;
+          this.log('error', `Verbindingsfout tijdens reactie: ${errorDetail}`);
+        }
+      }
 
-    return historyItem;
+      const latencyMs = Math.round(performance.now() - startTime);
+      this.processedMessageIds.add(msg.ts);
+
+      const reactionStatus = {
+        success: reactionSuccess,
+        emoji: emojiName,
+        timestamp: new Date().toISOString(),
+        latencyMs,
+        messageTs: msg.ts,
+        period: parsed.period,
+        error: errorDetail
+      };
+
+      // Save reaction status on the specific shift block
+      if (typeof dayData === 'object' && dayData[blockId]) {
+        dayData[blockId] = {
+          ...dayData[blockId],
+          reactionStatus
+        };
+      } else {
+        dayData[blockId] = {
+          block: blockId,
+          vrijcheckActive: true,
+          reactionStatus
+        };
+      }
+      allShifts[targetDateIso] = dayData;
+      db.saveShifts(allShifts);
+
+      const historyItem = {
+        messageTs: msg.ts,
+        messageDate: parsed.parsedDate || targetDateIso,
+        period: parsed.period,
+        matchedShift: blockId,
+        emoji: emojiName,
+        reactionSuccess,
+        latencyMs,
+        status: reactionSuccess ? 'success' : 'error',
+        details: reactionSuccess 
+          ? `Succesvol gereageerd met :${emojiName}: op ${parsed.period || ''} (${latencyMs}ms reactietijd)` 
+          : `Mislukt om te reageren met :${emojiName}:: ${errorDetail}`,
+        isSimulation
+      };
+      db.addHistoryItem(historyItem);
+
+      if (this.io) {
+        this.io.emit('bot:reaction_event', historyItem);
+        this.io.emit('shifts:updated', allShifts);
+      }
+
+      results.push(historyItem);
+    }
+
+    return results[0] || null;
   }
 
   async simulateDayPlannerMessage({
     period = 'MIDDAG',
-    date = '17-10-2026',
-    overschotten = { shift1: 3, shift2: 4, shift3: 2 }
+    date,
+    overschotten
   }) {
-    const fakeTs = (Date.now() / 1000).toFixed(6);
-    const fakeMessage = {
-      ts: fakeTs,
-      username: 'Day-Planning-Sender',
-      text: `:picnic: ${period} ${date}
-
-Graag voor 11:00u bevestigen dat je komt d.m.v. 
-
-Ziek melden?
-De ziekmeld-procedure staat in de Bookmarks!
-
-Tekorten
-Geen tekort
-
-Overschotten
-Shift 1: ${overschotten.shift1}
-Shift 2: ${overschotten.shift2}
-${overschotten.shift3 ? `Shift 3: ${overschotten.shift3}` : ''}
-
-Check je vrij? Als iedereen gecheckt heeft, hoor je uiterlijk 1,5 uur voor aanvang van je shift of je thuis kan blijven!
-Vraag de R+ om een taak 
-• EPV's wassen
-• Hub vegen
-• Kantine schoonmaken
-• Koeling schoonmaken
-
-R+: @Martijn 13:00  20:00
-TD/SD: @Shakira van Asperen
-
-Nog vragen? Check de bookmarks in dit kanaal en/of de RunnerWiki @channel`,
-      channel: this.resolvedChannelId || 'C_SIMULATED_HLM'
-    };
-
-    this.log('info', `[SIMULATIE] Bericht van Day-Planning-Sender (${period} ${date})`);
-    return await this.processMessage(fakeMessage, true);
+    const formattedDate = date || (period === 'OCHTEND' ? '18-10-2026' : '17-10-2026');
+    const emulationResult = await this.emulator.emulatePost({
+      period,
+      date: formattedDate,
+      overschotten,
+      isSimulation: true
+    });
+    return emulationResult.result;
   }
 
   /**

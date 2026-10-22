@@ -68,6 +68,7 @@ export const SlackLiveView = ({
   };
 
   const isRealSlackConnected = (botStatus?.status === 'polling' || botStatus?.status === 'connected') && Boolean(botStatus?.authInfo?.user);
+  const cleanChannelName = (botStatus?.channelName || 'nl-dist-runners-hlm').replace(/^#+/, '');
 
   return (
     <div className="p-4 space-y-4 pb-24 overflow-y-auto">
@@ -91,7 +92,7 @@ export const SlackLiveView = ({
               </h2>
               <div className="text-xs text-neutral-400 flex items-center gap-1 mt-0.5">
                 <Hash className="w-3 h-3 text-neutral-400" />
-                <span className="font-mono">{botStatus?.channelName || '#nl-dist-runners-hlm'}</span>
+                <span className="font-mono">{cleanChannelName}</span>
               </div>
             </div>
           </div>
@@ -166,7 +167,7 @@ export const SlackLiveView = ({
           </div>
 
           <p className="text-xs text-neutral-300 leading-relaxed">
-            Klik op een emoji hieronder om direct een reactie te plaatsen op het recentste bericht in <strong className="text-white font-mono">#{botStatus?.channelName || 'nl-dist-runners-hlm'}</strong>:
+            Klik op een emoji hieronder om direct een reactie te plaatsen op het recentste bericht in <strong className="text-white font-mono">#{cleanChannelName}</strong>:
           </p>
 
           <div className="grid grid-cols-3 gap-2 pt-1">
@@ -205,21 +206,56 @@ export const SlackLiveView = ({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-emerald-400" />
-              <h3 className="text-sm font-bold text-white">Live Berichten in #{botStatus?.channelName || 'nl-dist-runners-hlm'}</h3>
+              <h3 className="text-sm font-bold text-white">
+                Live Berichten in #{cleanChannelName}
+              </h3>
             </div>
-            <span className="text-[11px] text-neutral-400">Realtime</span>
+            <span className="text-[11px] text-neutral-400 font-mono">Realtime</span>
           </div>
 
-          <div className="space-y-2 max-h-48 overflow-y-auto">
-            {recentMessages.map((msg, idx) => (
-              <div key={msg.ts || idx} className="bg-[#20222a] border border-[#2c2e39] p-2.5 rounded-xl text-xs space-y-1">
-                <div className="flex items-center justify-between text-neutral-400 text-[11px]">
-                  <span className="font-bold text-white">{msg.user || msg.username || 'Gebruiker'}</span>
-                  <span>{msg.ts ? format(new Date(parseFloat(msg.ts) * 1000), 'HH:mm:ss') : ''}</span>
+          <div className="space-y-2 max-h-52 overflow-y-auto">
+            {recentMessages.map((msg, idx) => {
+              const isPlanner = msg.user === 'U062ALTD6DQ' || 
+                                msg.text?.includes('*OCHTEND') || 
+                                msg.text?.includes('*MIDDAG') || 
+                                (msg.username && msg.username.includes('Planning'));
+              const formattedTime = msg.ts ? format(new Date(parseFloat(msg.ts) * 1000), 'HH:mm:ss') : '';
+
+              return (
+                <div
+                  key={msg.ts || idx}
+                  className={`border p-2.5 rounded-xl text-xs space-y-1.5 transition-all ${
+                    isPlanner
+                      ? 'bg-blue-950/30 border-blue-500/40 shadow-sm'
+                      : 'bg-[#20222a] border-[#2c2e39]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-[11px]">
+                    {isPlanner ? (
+                      <span className="font-bold text-blue-300 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+                        <span>Day-Planning-Sender</span>
+                        <span className="text-[10px] text-neutral-400 font-mono">({msg.user || 'Bot'})</span>
+                      </span>
+                    ) : (
+                      <span className="font-bold text-white">{msg.user || msg.username || 'Gebruiker'}</span>
+                    )}
+                    <span className="font-mono text-neutral-300 font-semibold bg-black/40 px-1.5 py-0.5 rounded text-[10px]">
+                      {formattedTime}
+                    </span>
+                  </div>
+                  <p className="text-neutral-300 text-[11px] line-clamp-2 leading-relaxed">{msg.text}</p>
                 </div>
-                <p className="text-neutral-300 text-[11px] line-clamp-2">{msg.text}</p>
-              </div>
-            ))}
+              );
+            })}
+          </div>
+
+          {/* Second variance timing note */}
+          <div className="bg-[#15171e] border border-[#272b38] rounded-xl p-2.5 flex items-start gap-2 text-[11px] text-neutral-300">
+            <Clock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold text-white">Seconden-variatie gedetecteerd:</span> De Day-Planner-Sender post niet op de exacte seconde (bijv. <code className="text-amber-300">:19s</code>, <code className="text-amber-300">:28s</code> of zelfs in de minuut erna). Onze bot luistert daarom de volledige release-periode non-stop elke 500ms om direct te reageren.
+            </div>
           </div>
         </div>
       )}

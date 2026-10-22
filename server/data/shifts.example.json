@@ -1,0 +1,34 @@
+{
+  "2026-10-25": {
+    "M1": {
+      "block": "M1",
+      "startTime": "06:30",
+      "endTime": "15:00",
+      "vrijcheckActive": true
+    },
+    "M2": {
+      "block": "M2",
+      "startTime": "07:00",
+      "endTime": "15:30",
+      "vrijcheckActive": false
+    },
+    "S1": {
+      "block": "S1",
+      "startTime": "13:00",
+      "endTime": "21:30",
+      "vrijcheckActive": false
+    },
+    "S2": {
+      "block": "S2",
+      "startTime": "14:00",
+      "endTime": "22:30",
+      "vrijcheckActive": false
+    },
+    "S3": {
+      "block": "S3",
+      "startTime": "16:30",
+      "endTime": "23:00",
+      "vrijcheckActive": false
+    }
+  }
+}

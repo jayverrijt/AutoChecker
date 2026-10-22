@@ -15,10 +15,12 @@ export const SlideToVrijcheck = ({
   const trackRef = useRef(null);
   const startXRef = useRef(0);
   const isDraggingRef = useRef(false);
+  const progressRef = useRef(isActive ? 1 : 0);
 
   useEffect(() => {
     setIsCompleted(isActive);
     setDragProgress(isActive ? 1 : 0);
+    progressRef.current = isActive ? 1 : 0;
   }, [isActive]);
 
   const handleStart = (clientX) => {
@@ -37,9 +39,10 @@ export const SlideToVrijcheck = ({
 
     const currentX = clientX - trackRect.left - thumbWidth / 2;
     const progress = Math.min(Math.max(currentX / maxDistance, 0), 1);
+    progressRef.current = progress;
     setDragProgress(progress);
 
-    if (progress >= 0.88 && !isCompleted) {
+    if (progress >= 0.75 && !isCompleted) {
       triggerSuccess();
     }
   };
@@ -49,24 +52,31 @@ export const SlideToVrijcheck = ({
     isDraggingRef.current = false;
     setIsDragging(false);
 
-    if (dragProgress >= 0.88) {
+    if (progressRef.current >= 0.70) {
       triggerSuccess();
     } else {
       // Snap back to 0
       setDragProgress(0);
+      progressRef.current = 0;
     }
   };
 
   const triggerSuccess = () => {
     isDraggingRef.current = false;
     setIsDragging(false);
+    progressRef.current = 1;
     setDragProgress(1);
     setIsCompleted(true);
 
-    if (navigator.vibrate) {
-      navigator.vibrate([40, 30, 80]);
-    }
-    sounds.playSuccess();
+    try {
+      if (navigator.vibrate) {
+        navigator.vibrate([40, 30, 80]);
+      }
+    } catch (e) {}
+
+    try {
+      sounds.playSuccess();
+    } catch (e) {}
 
     if (onConfirm) {
       onConfirm();
@@ -77,6 +87,7 @@ export const SlideToVrijcheck = ({
     e.stopPropagation();
     setIsCompleted(false);
     setDragProgress(0);
+    progressRef.current = 0;
     if (onDisable) {
       onDisable();
     }
