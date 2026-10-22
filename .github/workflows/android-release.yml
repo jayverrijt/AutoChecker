@@ -2,14 +2,13 @@ name: Android APK Build & Release
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'client/**'
-      - '.github/workflows/android-release.yml'
     tags:
       - 'v*'
   workflow_dispatch:
+
+concurrency:
+  group: android-build-release
+  cancel-in-progress: true
 
 permissions:
   contents: write

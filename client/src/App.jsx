@@ -26,7 +26,7 @@ import { SlackEmoji } from './components/SlackEmoji';
 import { sounds } from './utils/audio';
 import { Smartphone, Monitor, CheckCircle2, Zap, ChevronLeft } from 'lucide-react';
 import { slackService } from './services/slackService';
-import { getShiftForBlock, saveShiftBlock, toggleVrijcheckForBlock, calculateWeekHours } from './utils/shiftHelpers';
+import { getShiftForBlock, saveShiftBlock, toggleVrijcheckForBlock } from './utils/shiftHelpers';
 
 const SOCKET_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3001'
@@ -847,7 +847,6 @@ export function App() {
               onRefresh={handleRefreshAll}
               isRefreshing={isRefreshing}
               weekNumber={weekNumber}
-              totalHours={calculateWeekHours(shifts, weekDays)}
               isLiveBotActive={botStatus?.status === 'polling'}
             />
 

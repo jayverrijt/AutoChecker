@@ -23,7 +23,6 @@ export const Header = ({
   onRefresh,
   isRefreshing = false,
   weekNumber,
-  totalHours = '26.97',
   isLiveBotActive
 }) => {
   // Format Month Year (e.g. "Oktober 2026")
@@ -124,13 +123,10 @@ export const Header = ({
       {/* Divider line under tabs */}
       <div className="border-b border-[#22242f] w-full" />
 
-      {/* Teamwork Subheader: Week number & Scheduled hours */}
-      <div className="flex items-center justify-between px-4 py-2 bg-[#121316] border-b border-[#22242f]">
+      {/* Teamwork Subheader: Week number */}
+      <div className="flex items-center px-4 py-2 bg-[#121316] border-b border-[#22242f]">
         <span className="text-sm font-bold text-white tracking-tight">
           Week {weekNumber || '43'}
-        </span>
-        <span className="text-xs text-neutral-400 font-medium">
-          Ingeroosterd: <strong className="text-white font-bold">{totalHours}u</strong>
         </span>
       </div>
     </header>

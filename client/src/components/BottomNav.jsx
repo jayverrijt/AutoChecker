@@ -1,11 +1,11 @@
 import React from 'react';
-import { Home, Calendar, ClipboardList, Menu } from 'lucide-react';
+import { Home, Calendar, Menu } from 'lucide-react';
 
 export const BottomNav = ({ activeTab, onTabChange, hasUnreadReaction }) => {
   const isMenuSection = activeTab === 'menu' || activeTab === 'live' || activeTab === 'settings';
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 w-full md:max-w-md mx-auto bg-[#0e0f12]/95 backdrop-blur-md border-t border-[#232632] py-2 px-6 flex items-center justify-around z-40 select-none pb-safe">
+    <nav className="fixed bottom-0 left-0 right-0 w-full md:max-w-md mx-auto bg-[#0e0f12]/95 backdrop-blur-md border-t border-[#232632] py-2 px-10 flex items-center justify-between z-40 select-none pb-safe">
       {/* 1. Home Tab */}
       <button
         type="button"
@@ -34,21 +34,7 @@ export const BottomNav = ({ activeTab, onTabChange, hasUnreadReaction }) => {
         <Calendar className={`w-6 h-6 ${activeTab === 'schedule' ? 'stroke-[2.5]' : 'stroke-[1.8]'}`} />
       </button>
 
-      {/* 3. Taken / Uren Tab (Matching Teamwork icon #3) */}
-      <button
-        type="button"
-        onClick={() => onTabChange('schedule')}
-        className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-90 ${
-          activeTab === 'hours'
-            ? 'text-[#3171f7]'
-            : 'text-neutral-400 hover:text-neutral-200'
-        }`}
-        title="Uren & Taken"
-      >
-        <ClipboardList className={`w-6 h-6 ${activeTab === 'hours' ? 'stroke-[2.5]' : 'stroke-[1.8]'}`} />
-      </button>
-
-      {/* 4. Menu Tab */}
+      {/* 3. Menu Tab */}
       <button
         type="button"
         onClick={() => onTabChange('menu')}

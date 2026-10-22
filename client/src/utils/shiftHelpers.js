@@ -88,38 +88,6 @@ export function getDayShifts(shiftsData, dateKey) {
 }
 
 /**
- * Calculates duration in hours between two HH:MM strings (e.g. "16:56" and "19:21" -> 2.42)
- */
-export function parseDurationHours(startTime, endTime) {
-  if (!startTime || !endTime) return 0;
-  const [sh, sm] = startTime.split(':').map(Number);
-  const [eh, em] = endTime.split(':').map(Number);
-  if (isNaN(sh) || isNaN(eh)) return 0;
-  let startMinutes = sh * 60 + (sm || 0);
-  let endMinutes = eh * 60 + (em || 0);
-  if (endMinutes < startMinutes) endMinutes += 24 * 60; // Next day wrap
-  return (endMinutes - startMinutes) / 60;
-}
-
-/**
- * Calculates total scheduled hours for a week (returns string e.g. "26.97")
- */
-export function calculateWeekHours(shiftsData, weekDates) {
-  let total = 0;
-  if (!weekDates || !Array.isArray(weekDates)) return '26.97';
-
-  weekDates.forEach((date) => {
-    const dKey = typeof date === 'string' ? date : date.toISOString().split('T')[0];
-    const dayShifts = getDayShifts(shiftsData, dKey);
-    dayShifts.forEach((s) => {
-      total += parseDurationHours(s.startTime, s.endTime);
-    });
-  });
-
-  return total > 0 ? total.toFixed(2) : '26.97';
-}
-
-/**
  * Returns the shift configuration for a specific block on a date.
  * Default: vrijcheckActive is FALSE (the user must explicitly opt in).
  */
