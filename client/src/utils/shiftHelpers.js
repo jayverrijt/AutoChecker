@@ -15,7 +15,7 @@ export function formatDay2Letters(date) {
 export function getShiftForBlock(shiftsData, dateKey, blockId) {
   const dayData = shiftsData?.[dateKey];
   const blockDef = getBlockInfo(blockId);
-  const defaultTimes = blockDef?.defaultTime?.split(' - ') || ['13:00', '21:30'];
+  const defaultTimes = blockDef?.defaultTime?.split(' - ') || ['14:00', '16:45'];
 
   const base = {
     block: blockId,

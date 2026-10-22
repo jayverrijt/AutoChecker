@@ -23,9 +23,11 @@ export const ShiftModal = ({
   const formattedDate = format(date, 'EEEE, d MMMM', { locale: nl });
   const capitalizedDate = formattedDate.charAt(0).toUpperCase() + formattedDate.slice(1);
 
+  const initialDef = getBlockInfo(currentShift?.block || 'M2') || SHIFT_BLOCK_MAP['M2'];
+  const initialTimes = (initialDef?.defaultTime || '09:15 - 12:00').split(' - ');
   const [selectedBlock, setSelectedBlock] = useState(currentShift?.block || 'M2');
-  const [startTime, setStartTime] = useState(currentShift?.startTime || '07:00');
-  const [endTime, setEndTime] = useState(currentShift?.endTime || '15:30');
+  const [startTime, setStartTime] = useState(currentShift?.startTime || initialTimes[0]);
+  const [endTime, setEndTime] = useState(currentShift?.endTime || initialTimes[1]);
   const [vrijcheckActive, setVrijcheckActive] = useState(
     Boolean(currentShift?.vrijcheckActive)
   );
@@ -88,14 +90,18 @@ export const ShiftModal = ({
 
   useEffect(() => {
     if (currentShift) {
+      const def = getBlockInfo(currentShift.block || 'M2') || SHIFT_BLOCK_MAP['M2'];
+      const times = (def?.defaultTime || '09:15 - 12:00').split(' - ');
       setSelectedBlock(currentShift.block || 'M2');
-      setStartTime(currentShift.startTime || '07:00');
-      setEndTime(currentShift.endTime || '15:30');
+      setStartTime(currentShift.startTime || times[0]);
+      setEndTime(currentShift.endTime || times[1]);
       setVrijcheckActive(Boolean(currentShift.vrijcheckActive));
     } else {
+      const def = SHIFT_BLOCK_MAP['M2'];
+      const times = (def?.defaultTime || '09:15 - 12:00').split(' - ');
       setSelectedBlock('M2');
-      setStartTime('07:00');
-      setEndTime('15:30');
+      setStartTime(times[0]);
+      setEndTime(times[1]);
       setVrijcheckActive(false);
     }
     setDragOffsetY(0);

@@ -816,11 +816,11 @@ export const SettingsView = ({
 
           <div className="space-y-2">
             {[
-              { block: 'M1', defaultEmoji: '1-red', desc: 'Ochtend Shift 1' },
-              { block: 'M2', defaultEmoji: '2-red', desc: 'Ochtend Shift 2' },
-              { block: 'S1', defaultEmoji: '1-red', desc: 'Middag Shift 1' },
-              { block: 'S2', defaultEmoji: '2-red', desc: 'Middag Shift 2' },
-              { block: 'S3', defaultEmoji: '3-red', desc: 'Middag Shift 3' },
+              { block: 'M1', defaultEmoji: '1-red', desc: 'Ochtend Shift 1 (06:30 - 09:15)' },
+              { block: 'M2', defaultEmoji: '2-red', desc: 'Ochtend Shift 2 (09:15 - 12:00)' },
+              { block: 'S1', defaultEmoji: '1-red', desc: 'Middag Shift 1 (14:00 - 16:45)' },
+              { block: 'S2', defaultEmoji: '2-red', desc: 'Middag Shift 2 (16:45 - 19:30)' },
+              { block: 'S3', defaultEmoji: '3-red', desc: 'Middag Shift 3 (19:30 - 22:15)' },
             ].map(({ block, desc }) => {
               const currentEmoji = formData.emojiMapping?.[block] || '1-red';
               return (

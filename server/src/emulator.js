@@ -55,7 +55,7 @@ Vraag de R+ om een taak
 • Kantine schoonmaken
 • Koeling schoonmaken
 
-R+: @Martijn ${period === 'OCHTEND' ? '06:30 - 15:00' : '13:00 - 21:30'}
+R+: @Martijn ${period === 'OCHTEND' ? '06:30 - 09:15' : '14:00 - 16:45'}
 TD/SD: @Shakira van Asperen
 
 Nog vragen? Check de bookmarks in dit kanaal en/of de RunnerWiki @channel`;

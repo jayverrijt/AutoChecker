@@ -76,11 +76,11 @@ test('4. DayPlannerSender Emulation: Morning Shift (M1) Trigger & Sub-Second Rea
   // 1. Setup user schedule on server: M1 vrijcheckActive = true
   const initialShifts = db.getShifts();
   initialShifts[testDateIso] = {
-    M1: { block: 'M1', startTime: '06:30', endTime: '15:00', vrijcheckActive: true },
-    M2: { block: 'M2', startTime: '07:00', endTime: '15:30', vrijcheckActive: false },
-    S1: { block: 'S1', startTime: '13:00', endTime: '21:30', vrijcheckActive: false },
-    S2: { block: 'S2', startTime: '14:00', endTime: '22:30', vrijcheckActive: false },
-    S3: { block: 'S3', startTime: '16:30', endTime: '23:00', vrijcheckActive: false }
+    M1: { block: 'M1', startTime: '06:30', endTime: '09:15', vrijcheckActive: true },
+    M2: { block: 'M2', startTime: '09:15', endTime: '12:00', vrijcheckActive: false },
+    S1: { block: 'S1', startTime: '14:00', endTime: '16:45', vrijcheckActive: false },
+    S2: { block: 'S2', startTime: '16:45', endTime: '19:30', vrijcheckActive: false },
+    S3: { block: 'S3', startTime: '19:30', endTime: '22:15', vrijcheckActive: false }
   };
   db.saveShifts(initialShifts);
 
@@ -133,7 +133,7 @@ test('5. DayPlannerSender Emulation: Afternoon Shift (S3) Trigger with Emoji 3-r
     M2: { block: 'M2', vrijcheckActive: false },
     S1: { block: 'S1', vrijcheckActive: false },
     S2: { block: 'S2', vrijcheckActive: false },
-    S3: { block: 'S3', startTime: '16:30', endTime: '23:00', vrijcheckActive: true }
+    S3: { block: 'S3', startTime: '19:30', endTime: '22:15', vrijcheckActive: true }
   };
   db.saveShifts(initialShifts);
 
