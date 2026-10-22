@@ -14,7 +14,8 @@ import {
   WifiOff, 
   Activity, 
   SlidersHorizontal,
-  Bell
+  Bell,
+  Users
 } from 'lucide-react';
 import { getShiftForBlock } from '../utils/shiftHelpers';
 import { SHIFT_BLOCKS } from '../utils/constants';
@@ -178,6 +179,17 @@ export const HomeView = ({
               {settings?.channelName || '#nl-dist-runners-hlm'}
             </div>
           </div>
+        </div>
+
+        {/* Multi-User Banner */}
+        <div className="flex items-center justify-between text-[11px] px-1 text-neutral-400 pt-0.5">
+          <span className="flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5 text-blue-400" />
+            <span>Multi-User Server</span>
+          </span>
+          <span className="text-neutral-300 font-medium">
+            {vpsStatus?.botStatus?.activeUsersCount ? `${vpsStatus.botStatus.activeUsersCount} runner(s) verbonden` : 'Multi-Runner actief'}
+          </span>
         </div>
 
         {/* Current VPS Bot Activity */}

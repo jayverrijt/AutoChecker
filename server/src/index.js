@@ -41,7 +41,7 @@ if (CLIENT_DIST) {
 
 export const botManager = new SlackBotManager(io);
 
-// Initialize bot on startup
+// Initialize central listener on startup
 botManager.initialize();
 
 // Socket.io Authentication Middleware
@@ -59,22 +59,32 @@ io.use((socket, next) => {
   next();
 });
 
-// Socket.io handlers
+// Socket.io handlers (Multi-User aware via room `user:${userId}`)
 io.on('connection', (socket) => {
-  console.log(`[SOCKET] Geautoriseerde client verbonden: ${socket.id}`);
+  const userId = (
+    socket.handshake.auth?.userId ||
+    socket.handshake.headers?.['x-user-id'] ||
+    socket.handshake.query?.userId ||
+    'default'
+  ).toString().trim();
 
-  // Send initial state to newly connected client
-  socket.emit('bot:status', botManager.getStatus());
-  socket.emit('shifts:updated', db.getShifts());
-  socket.emit('settings:updated', db.getSettings());
-  socket.emit('history:updated', db.getHistory());
+  socket.userId = userId;
+  socket.join(`user:${userId}`);
+
+  console.log(`[SOCKET] Geautoriseerde client verbonden: ${socket.id} (Runner: ${userId})`);
+
+  // Send initial state specific to this runner
+  socket.emit('bot:status', botManager.getStatus(userId));
+  socket.emit('shifts:updated', db.getShifts(userId));
+  socket.emit('settings:updated', db.getSettings(userId));
+  socket.emit('history:updated', db.getHistory(userId));
 
   socket.on('disconnect', () => {
-    console.log(`[SOCKET] Client verbroken: ${socket.id}`);
+    console.log(`[SOCKET] Client verbroken: ${socket.id} (Runner: ${userId})`);
   });
 });
 
-// REST API Authentication Middleware
+// REST API Authentication & Multi-User Identification Middleware
 app.use((req, res, next) => {
   // Allow health check, auth verification, and non-api routes without token
   if (
@@ -98,6 +108,14 @@ app.use((req, res, next) => {
     });
   }
 
+  // Extract runner userId
+  req.userId = (
+    req.headers['x-user-id'] ||
+    req.query.userId ||
+    req.body?.userId ||
+    'default'
+  ).toString().trim();
+
   next();
 });
 
@@ -105,15 +123,19 @@ app.use((req, res, next) => {
 
 // 0. Auth Verification
 app.post('/api/auth/verify', (req, res) => {
-  const { token } = req.body || {};
+  const { token, userId } = req.body || {};
   const expectedKey = getServerApiKey();
 
   if (token && token === expectedKey) {
+    const id = userId || req.userId || 'default';
+    const user = db.getUser(id);
     res.json({
       ok: true,
       authenticated: true,
+      userId: id,
+      user: user?.username || id,
       serverTime: new Date().toISOString(),
-      message: 'Server authenticatie succesvol!'
+      message: 'Server authenticatie succesvol (Multi-User actief)!'
     });
   } else {
     res.status(401).json({
@@ -124,9 +146,9 @@ app.post('/api/auth/verify', (req, res) => {
   }
 });
 
-// 1. Shifts
+// 1. Shifts (Per Runner)
 app.get('/api/shifts', (req, res) => {
-  res.json(db.getShifts());
+  res.json(db.getShifts(req.userId));
 });
 
 app.post('/api/shifts', (req, res) => {
@@ -135,8 +157,8 @@ app.post('/api/shifts', (req, res) => {
     return res.status(400).json({ error: 'dateKey is verplicht (YYYY-MM-DD)' });
   }
 
-  const updatedShifts = db.updateShift(dateKey, shift);
-  io.emit('shifts:updated', updatedShifts);
+  const updatedShifts = db.updateShift(req.userId, dateKey, shift);
+  io.to(`user:${req.userId}`).emit('shifts:updated', updatedShifts);
   res.json(updatedShifts);
 });
 
@@ -145,71 +167,84 @@ app.post('/api/shifts/bulk', (req, res) => {
   if (!shifts) {
     return res.status(400).json({ error: 'shifts object is verplicht' });
   }
-  db.saveShifts(shifts);
-  io.emit('shifts:updated', shifts);
+  db.saveShifts(req.userId, shifts);
+  io.to(`user:${req.userId}`).emit('shifts:updated', shifts);
   res.json(shifts);
 });
 
-// 2. Settings
+// 2. Settings (Per Runner)
 app.get('/api/settings', (req, res) => {
-  res.json(db.getSettings());
+  res.json(db.getSettings(req.userId));
 });
 
 app.post('/api/settings', async (req, res) => {
-  const updated = db.saveSettings(req.body);
-  io.emit('settings:updated', updated);
+  const updated = db.saveSettings(req.userId, req.body);
+  io.to(`user:${req.userId}`).emit('settings:updated', updated);
 
-  // Reinitialize Slack Bot if token or channel changed
-  await botManager.initialize();
+  // If Slack token was updated or server was disconnected, reinitialize poller
+  if (req.body.slackToken) {
+    await botManager.initialize();
+  }
   io.emit('bot:status', botManager.getStatus());
 
   res.json(updated);
 });
 
-// 3. Bot Status & Control
+// 3. Bot Status & Multi-User Overview
 app.get('/api/status', (req, res) => {
   res.json({
-    ...botManager.getStatus(),
+    ...botManager.getStatus(req.userId),
     serverTime: new Date().toISOString(),
     authRequired: true
   });
 });
 
+app.get('/api/users', (req, res) => {
+  const users = db.getAllUsers().map(u => ({
+    userId: u.userId,
+    username: u.username || u.userId,
+    hasToken: Boolean(u.slackToken && u.slackToken.trim().length > 0),
+    autoReact: u.autoReact !== false,
+    lastSeen: u.lastSeen
+  }));
+  res.json({ ok: true, count: users.length, users });
+});
+
 app.post('/api/bot/reconnect', async (req, res) => {
   await botManager.initialize();
-  const status = botManager.getStatus();
-  io.emit('bot:status', status);
+  const status = botManager.getStatus(req.userId);
+  io.emit('bot:status', botManager.getStatus());
   res.json(status);
 });
 
 app.post('/api/bot/test-connection', async (req, res) => {
-  const result = await botManager.testConnection();
-  io.emit('bot:status', botManager.getStatus());
+  const result = await botManager.testConnection(req.userId);
+  io.to(`user:${req.userId}`).emit('bot:status', botManager.getStatus(req.userId));
   res.json(result);
 });
 
 app.post('/api/bot/test-reaction', async (req, res) => {
   const { emoji = '3-red' } = req.body || {};
   try {
-    const result = await botManager.testRealReactionOnSlack({ emoji });
+    const result = await botManager.testRealReactionOnSlack({ emoji, userId: req.userId });
     res.json({ ok: true, result });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// 4. Reaction History
+// 4. Reaction History (Per Runner)
 app.get('/api/history', (req, res) => {
-  res.json(db.getHistory());
+  res.json(db.getHistory(req.userId));
 });
 
 app.post('/api/history/clear', (req, res) => {
-  const cleared = db.clearHistory();
-  io.emit('history:updated', cleared);
+  const cleared = db.clearHistory(req.userId);
+  io.to(`user:${req.userId}`).emit('history:updated', cleared);
   res.json({ success: true, history: cleared });
 });
 
-// 5. Emulation Endpoints (Day-Planning-Sender Emulatie & Benchmark)
+// 5. Emulation Endpoints (Day-Planning-Sender Emulatie & Multi-User Benchmark)
 app.post('/api/simulate', async (req, res) => {
   const { period = 'MIDDAG', date = '17-10-2026', overschotten } = req.body;
   const result = await botManager.simulateDayPlannerMessage({
@@ -247,9 +282,12 @@ app.post('/api/test/emulate-planner', async (req, res) => {
 
 // Health check
 app.get('/api/health', (req, res) => {
+  const users = db.getAllUsers();
   res.json({ 
     status: 'ok', 
     server: 'vrijcheck-24-7',
+    multiUser: true,
+    activeRunners: users.length,
     time: new Date().toISOString(),
     authRequired: true
   });
@@ -263,6 +301,7 @@ app.get('*', (req, res) => {
   }
 
   const st = botManager.getStatus();
+  const allUsers = db.getAllUsers();
   const uptimeSeconds = Math.floor(process.uptime());
   const hours = Math.floor(uptimeSeconds / 3600);
   const minutes = Math.floor((uptimeSeconds % 3600) / 60);
@@ -278,7 +317,7 @@ app.get('*', (req, res) => {
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background: #0c0d12; color: #f3f4f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-    .card { background: #161722; border: 1px solid #272a38; border-radius: 20px; max-width: 480px; width: 100%; padding: 28px; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+    .card { background: #161722; border: 1px solid #272a38; border-radius: 20px; max-width: 500px; width: 100%; padding: 28px; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
     .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
     .title { font-size: 19px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 8px; }
     .badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 9999px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #34d399; font-size: 12px; font-weight: 700; }
@@ -300,18 +339,22 @@ app.get('*', (req, res) => {
 <body>
   <div class="card">
     <div class="header">
-      <div class="title">⚡ AutoChecker</div>
+      <div class="title">⚡ AutoChecker 24/7</div>
       <div class="badge">
         <span class="pulse"></span>
         <span>${st.status === 'polling' ? 'Online & Polling' : 'Actief'}</span>
       </div>
     </div>
-    <p class="desc">De 24/7 achtergrondservice voor Teamwork Vrijcheck draait operationeel op deze Linux VPS.</p>
+    <p class="desc">Centrale Multi-User Vrijcheck Engine. Luistert 24/7 en checkt alle aangesloten runners parallel vrij.</p>
     
     <div class="grid">
       <div class="item">
-        <div class="item-label">Slack Account</div>
-        <div class="item-val">${st.authInfo?.user || 'jayverrijt'}</div>
+        <div class="item-label">Architectuur</div>
+        <div class="item-val">Multi-User (24/7)</div>
+      </div>
+      <div class="item">
+        <div class="item-label">Actieve Runners</div>
+        <div class="item-val">${allUsers.length} runner(s)</div>
       </div>
       <div class="item">
         <div class="item-label">Kanaal</div>
@@ -321,10 +364,6 @@ app.get('*', (req, res) => {
         <div class="item-label">Target Bot</div>
         <div class="item-val">${st.botSenderName || 'Day-Planning-Sender'}</div>
       </div>
-      <div class="item">
-        <div class="item-label">Uptime</div>
-        <div class="item-val">${uptimeStr}</div>
-      </div>
     </div>
 
     <div class="actions">
@@ -332,7 +371,7 @@ app.get('*', (req, res) => {
       <a href="/api/health" class="btn btn-secondary">🔍 API Health</a>
     </div>
 
-    <div class="footer">AutoChecker 24/7 Daemon &bull; Port 3001 &bull; REST API &amp; Socket.io</div>
+    <div class="footer">AutoChecker Multi-Tenant Engine &bull; Port 3001 &bull; REST API &amp; Socket.io</div>
   </div>
 </body>
 </html>`);
@@ -341,7 +380,7 @@ app.get('*', (req, res) => {
 // Start listening if run directly
 if (process.env.NODE_ENV !== 'test') {
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SERVER] 🚀 Vrijcheck 24/7 webserver actief op http://0.0.0.0:${PORT}`);
-    console.log(`[SERVER] 🔒 Beveiligd met Server Token authenticatie.`);
+    console.log(`[SERVER] 🚀 Vrijcheck 24/7 Multi-User webserver actief op http://0.0.0.0:${PORT}`);
+    console.log(`[SERVER] 🔒 Beveiligd met Server Token authenticatie & Runner-isolatie.`);
   });
 }

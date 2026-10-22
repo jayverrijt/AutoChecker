@@ -42,6 +42,29 @@ class SlackService {
     this.isPollingActive = false;
   }
 
+  getUserId() {
+    if (this.cachedAuth?.userId) {
+      return this.cachedAuth.userId;
+    }
+    try {
+      const stored = localStorage.getItem('vrijcheck_user_id');
+      if (stored && stored.trim().length > 0) return stored.trim();
+      const generated = 'runner_' + Math.random().toString(36).substring(2, 9);
+      localStorage.setItem('vrijcheck_user_id', generated);
+      return generated;
+    } catch (e) {
+      return 'runner_default';
+    }
+  }
+
+  setUserId(userId) {
+    if (userId) {
+      try {
+        localStorage.setItem('vrijcheck_user_id', userId.trim());
+      } catch (e) {}
+    }
+  }
+
   getCleanCookie(rawCookie) {
     if (!rawCookie) return '';
     let val = rawCookie.trim();
@@ -165,9 +188,10 @@ class SlackService {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-api-key': serverToken
+            'x-api-key': serverToken,
+            'x-user-id': this.getUserId()
           },
-          body: JSON.stringify({ emoji: cleanEmoji }),
+          body: JSON.stringify({ emoji: cleanEmoji, userId: this.getUserId() }),
           signal: controller.signal
         });
         clearTimeout(timeoutId);
@@ -268,7 +292,8 @@ class SlackService {
 
       const res = await fetch(`${cleanUrl}/api/status`, {
         headers: {
-          'x-api-key': targetToken
+          'x-api-key': targetToken,
+          'x-user-id': this.getUserId()
         },
         signal: controller.signal
       });
@@ -465,7 +490,12 @@ class SlackService {
   }
 
   saveSettings(newSettings) {
-    const merged = { ...this.getSettings(), ...newSettings };
+    const current = this.getSettings();
+    const merged = { ...current, ...newSettings };
+    merged.userId = this.getUserId();
+    if (this.cachedAuth?.user) {
+      merged.username = this.cachedAuth.user;
+    }
     try {
       localStorage.setItem('vrijcheck_settings', JSON.stringify(merged));
     } catch (e) {}
@@ -475,7 +505,8 @@ class SlackService {
 
     const headers = {
       'Content-Type': 'application/json',
-      'x-api-key': serverToken
+      'x-api-key': serverToken,
+      'x-user-id': this.getUserId()
     };
 
     if (Capacitor.isNativePlatform()) {
@@ -520,20 +551,21 @@ class SlackService {
 
     const headers = { 
       'Content-Type': 'application/json',
-      'x-api-key': serverToken
+      'x-api-key': serverToken,
+      'x-user-id': this.getUserId()
     };
 
     if (Capacitor.isNativePlatform()) {
       CapacitorHttp.post({
         url: `${serverUrl}/api/shifts/bulk`,
         headers,
-        data: { shifts }
+        data: { shifts, userId: this.getUserId() }
       }).catch(() => {});
     } else {
       fetch(`${serverUrl}/api/shifts/bulk`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ shifts })
+        body: JSON.stringify({ shifts, userId: this.getUserId() })
       }).catch(() => {});
     }
   }
@@ -549,22 +581,30 @@ class SlackService {
       if (Capacitor.isNativePlatform()) {
         const res = await CapacitorHttp.post({
           url: `${cleanUrl}/api/auth/verify`,
-          headers: { 'Content-Type': 'application/json' },
-          data: { token: cleanToken }
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-api-key': cleanToken,
+            'x-user-id': this.getUserId()
+          },
+          data: { token: cleanToken, userId: this.getUserId() }
         });
         if (res?.data?.ok) {
-          return { ok: true, message: 'Verbonden met 24/7 webserver!' };
+          return { ok: true, message: 'Verbonden met 24/7 Multi-User webserver!' };
         }
         return { ok: false, error: res?.data?.error || 'Ongeldig server token of server onbereikbaar' };
       } else {
         const res = await fetch(`${cleanUrl}/api/auth/verify`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: cleanToken })
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-api-key': cleanToken,
+            'x-user-id': this.getUserId()
+          },
+          body: JSON.stringify({ token: cleanToken, userId: this.getUserId() })
         });
         const data = await res.json();
         if (res.ok && data.ok) {
-          return { ok: true, message: 'Verbonden met 24/7 webserver!' };
+          return { ok: true, message: 'Verbonden met 24/7 Multi-User webserver!' };
         }
         return { ok: false, error: data.error || 'Server authenticatie geweigerd' };
       }

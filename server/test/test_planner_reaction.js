@@ -269,3 +269,117 @@ test('8. Multi-run Latency Stress Test (5 consecutive emulations with random jit
 
   assert.ok(avgLatency < 200, `Average reaction latency should be < 200ms (was ${avgLatency}ms)`);
 });
+
+test('9. Multi-User Concurrency: Multiple registered runners react simultaneously with isolated schedules', async () => {
+  const apiKey = getServerApiKey();
+  const testDateIso = '2026-10-30';
+  const testDateNl = '30-10-2026';
+
+  // 1. Create Runner A (Pieter) -> Wants M1 vrij
+  const runnerAId = 'U_RUNNER_PIETER';
+  db.saveUser(runnerAId, {
+    userId: runnerAId,
+    username: 'pieter_v',
+    slackToken: 'xoxc-mock-token-pieter',
+    autoReact: true
+  });
+  db.saveShifts(runnerAId, {
+    [testDateIso]: {
+      M1: { block: 'M1', vrijcheckActive: true },
+      M2: { block: 'M2', vrijcheckActive: false }
+    }
+  });
+
+  // 2. Create Runner B (Sara) -> Wants M2 vrij
+  const runnerBId = 'U_RUNNER_SARA';
+  db.saveUser(runnerBId, {
+    userId: runnerBId,
+    username: 'sara_k',
+    slackToken: 'xoxc-mock-token-sara',
+    autoReact: true
+  });
+  db.saveShifts(runnerBId, {
+    [testDateIso]: {
+      M1: { block: 'M1', vrijcheckActive: false },
+      M2: { block: 'M2', vrijcheckActive: true }
+    }
+  });
+
+  // 3. Create Runner C (Lars) -> Wants no shifts vrij
+  const runnerCId = 'U_RUNNER_LARS';
+  db.saveUser(runnerCId, {
+    userId: runnerCId,
+    username: 'lars_t',
+    slackToken: 'xoxc-mock-token-lars',
+    autoReact: true
+  });
+  db.saveShifts(runnerCId, {
+    [testDateIso]: {
+      M1: { block: 'M1', vrijcheckActive: false }
+    }
+  });
+
+  // Emulate morning post
+  const res = await fetch(`${baseUrl}/api/test/emulate-planner`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey
+    },
+    body: JSON.stringify({
+      period: 'OCHTEND',
+      date: testDateNl,
+      isSimulation: true
+    })
+  });
+
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  const runners = data.emulation.result.runners;
+
+  // Verify Runner A got M1 (1-red)
+  const pieterResult = runners.find(r => r.userId === runnerAId);
+  assert.ok(pieterResult, 'Pieter must be processed');
+  assert.equal(pieterResult.matched, true);
+  assert.equal(pieterResult.blockId, 'M1');
+  assert.equal(pieterResult.emojiName, '1-red');
+  assert.equal(pieterResult.reactionSuccess, true);
+
+  // Verify Runner B got M2 (2-red)
+  const saraResult = runners.find(r => r.userId === runnerBId);
+  assert.ok(saraResult, 'Sara must be processed');
+  assert.equal(saraResult.matched, true);
+  assert.equal(saraResult.blockId, 'M2');
+  assert.equal(saraResult.emojiName, '2-red');
+  assert.equal(saraResult.reactionSuccess, true);
+
+  // Verify Runner C was not matched
+  const larsResult = runners.find(r => r.userId === runnerCId);
+  assert.ok(larsResult);
+  assert.equal(larsResult.matched, false);
+
+  // Verify database persistence for each runner individually
+  const pieterShifts = db.getShifts(runnerAId);
+  assert.equal(pieterShifts[testDateIso]?.M1?.reactionStatus?.success, true);
+
+  const saraShifts = db.getShifts(runnerBId);
+  assert.equal(saraShifts[testDateIso]?.M2?.reactionStatus?.success, true);
+  assert.equal(saraShifts[testDateIso]?.M1?.reactionStatus, undefined);
+
+  // Verify isolation via REST API endpoints with x-user-id header
+  const apiPieterShifts = await (await fetch(`${baseUrl}/api/shifts`, {
+    headers: { 'x-api-key': apiKey, 'x-user-id': runnerAId }
+  })).json();
+  assert.equal(apiPieterShifts[testDateIso]?.M1?.vrijcheckActive, true);
+
+  const apiSaraShifts = await (await fetch(`${baseUrl}/api/shifts`, {
+    headers: { 'x-api-key': apiKey, 'x-user-id': runnerBId }
+  })).json();
+  assert.equal(apiSaraShifts[testDateIso]?.M2?.vrijcheckActive, true);
+  assert.equal(apiSaraShifts[testDateIso]?.M1?.vrijcheckActive, false);
+
+  // Clean up test runners
+  db.deleteUser(runnerAId);
+  db.deleteUser(runnerBId);
+  db.deleteUser(runnerCId);
+});

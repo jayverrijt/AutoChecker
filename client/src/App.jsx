@@ -298,7 +298,10 @@ export function App() {
     try {
       s = io(serverUrl, {
         transports: ['websocket', 'polling'],
-        auth: { token: serverToken },
+        auth: { 
+          token: serverToken,
+          userId: slackService.getUserId()
+        },
         timeout: 4000
       });
 
@@ -374,7 +377,8 @@ export function App() {
       setSocket(s);
 
       const authHeaders = {
-        'x-api-key': serverToken
+        'x-api-key': serverToken,
+        'x-user-id': slackService.getUserId()
       };
 
       // Initial fetch with auth header
