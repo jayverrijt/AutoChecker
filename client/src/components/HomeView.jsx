@@ -105,9 +105,9 @@ export const HomeView = ({
 
   // VPS connection state
   const isVpsOnline = vpsStatus?.isConnected;
-  const vpsHost = settings?.serverUrl 
-    ? settings.serverUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '') 
-    : 'Niet geconfigureerd';
+  const vpsHost = (settings?.serverUrl || 'http://82.165.110.152:3001')
+    .replace(/^https?:\/\//, '')
+    .replace(/\/+$/, '');
 
   return (
     <div className="w-full max-w-md mx-auto px-4 py-3 space-y-3.5 pb-28 select-none animate-fadeIn">

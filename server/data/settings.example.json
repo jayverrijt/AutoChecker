@@ -7,7 +7,7 @@
   "botSenderName": "Day-Planning-Sender",
   "autoReact": true,
   "pollIntervalMs": 1000,
-  "serverApiKey": "vrijcheck_secret_2026",
+  "serverApiKey": "REDACTED_API_KEY",
   "emojiMapping": {
     "M1": "1-red",
     "M2": "2-red",

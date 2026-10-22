@@ -10,7 +10,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3001,
-        SERVER_API_KEY: 'vrijcheck_secret_2026'
+        SERVER_API_KEY: 'REDACTED_API_KEY'
       }
     }
   ]

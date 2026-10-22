@@ -25,12 +25,10 @@ import { BottomNav } from './components/BottomNav';
 import { SlackEmoji } from './components/SlackEmoji';
 import { sounds } from './utils/audio';
 import { Smartphone, Monitor, CheckCircle2, Zap, ChevronLeft } from 'lucide-react';
-import { slackService } from './services/slackService';
+import { slackService, DEFAULT_PROD_SERVER_URL, DEFAULT_PROD_SERVER_TOKEN } from './services/slackService';
 import { getShiftForBlock, saveShiftBlock, toggleVrijcheckForBlock } from './utils/shiftHelpers';
 
-const SOCKET_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://localhost:3001'
-  : '/';
+const SOCKET_URL = DEFAULT_PROD_SERVER_URL;
 
 
 export function App() {
@@ -75,13 +73,8 @@ export function App() {
 
   const refreshVpsStatus = async () => {
     const currentSettings = settings || slackService.getSettings();
-    const serverUrl = currentSettings?.serverUrl;
-    const serverToken = currentSettings?.serverToken;
-    if (!serverUrl) {
-      setVpsStatus({ isConnected: false, pingMs: null, botStatus: null, error: 'Geen server ingesteld' });
-      setIsServerConnected(false);
-      return;
-    }
+    const serverUrl = currentSettings?.serverUrl || DEFAULT_PROD_SERVER_URL;
+    const serverToken = currentSettings?.serverToken || DEFAULT_PROD_SERVER_TOKEN;
     const res = await slackService.fetchServerStatus(serverUrl, serverToken);
     if (res.ok) {
       setVpsStatus({
@@ -299,12 +292,8 @@ export function App() {
   useEffect(() => {
     let s = null;
     const currentSettings = settings || slackService.getSettings();
-    const serverUrl = (currentSettings?.serverUrl || '').trim() || (
-      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-        ? 'http://localhost:3001'
-        : '/'
-    );
-    const serverToken = (currentSettings?.serverToken || '').trim() || 'vrijcheck_secret_2026';
+    const serverUrl = (currentSettings?.serverUrl || '').trim() || DEFAULT_PROD_SERVER_URL;
+    const serverToken = (currentSettings?.serverToken || '').trim() || DEFAULT_PROD_SERVER_TOKEN;
 
     try {
       s = io(serverUrl, {

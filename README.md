@@ -181,11 +181,11 @@ De GitHub Actions workflows zijn geconfigureerd in `.github/workflows/`:
   Bouwt de Android debug APK automatisch bij pushes naar `main` en genereert een GitHub Release met de APK als download bij git tags (`v*`).
 
 - `server-ci-cd.yml`:
-  Draait de Node.js testsuite en verzorgt automatische deployment via SSH naar een server met behulp van de geconfigureerde repository secrets:
-  - `FLEETHUB_SSH_KEY` / `SSH_PRIVATE_KEY`
-  - `FLEETHUB_HOST` / `SERVER_HOST`
-  - `FLEETHUB_USER` / `SERVER_USER`
-  - `FLEETHUB_DEPLOY_PATH` / `SERVER_PATH`
+  Draait de Node.js testsuite en verzorgt automatische deployment via SSH naar de production server met behulp van de geconfigureerde repository secrets:
+  - `PROD_SSH_KEY` / `SSH_PRIVATE_KEY`
+  - `PROD_HOST` / `SERVER_HOST`
+  - `PROD_USER` / `SERVER_USER`
+  - `PROD_DEPLOY_PATH` / `SERVER_PATH`
 
 ---
 

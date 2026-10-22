@@ -18,7 +18,7 @@ export const app = express();
 export const server = http.createServer(app);
 
 export const getServerApiKey = () => {
-  return process.env.SERVER_API_KEY || db.getSettings().serverApiKey || 'vrijcheck_secret_2026';
+  return process.env.SERVER_API_KEY || db.getSettings().serverApiKey || 'REDACTED_API_KEY';
 };
 
 export const io = new Server(server, {

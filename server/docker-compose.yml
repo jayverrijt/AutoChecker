@@ -9,7 +9,7 @@ services:
       - "3001:3001"
     environment:
       - PORT=3001
-      - SERVER_API_KEY=vrijcheck_secret_2026
+      - SERVER_API_KEY=REDACTED_API_KEY
       - NODE_ENV=production
     volumes:
       - ./data:/app/data

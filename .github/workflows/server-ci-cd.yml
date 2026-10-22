@@ -41,7 +41,7 @@ jobs:
           NODE_ENV=test npm test
 
   deploy-server:
-    name: Deploy to 24/7 Server (FleetHub / VPS)
+    name: Deploy to 24/7 Production Server (VPS)
     needs: test-server
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -50,14 +50,14 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Deploy via SSH to FleetHub Server
+      - name: Deploy via SSH to Production Server
         uses: appleboy/ssh-action@v1.2.0
         env:
-          SSH_KEY: ${{ secrets.FLEETHUB_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
-          HOST: ${{ secrets.FLEETHUB_HOST || secrets.SERVER_HOST || '82.165.110.152' }}
-          USER: ${{ secrets.FLEETHUB_USER || secrets.SERVER_USER || 'jayv' }}
-          PORT: ${{ secrets.FLEETHUB_PORT || secrets.SERVER_PORT || '22' }}
-          TARGET_DIR: ${{ secrets.FLEETHUB_DEPLOY_PATH || secrets.SERVER_PATH || '/home/jayv/AutoChecker' }}
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.PROD_HOST || secrets.SERVER_HOST || '82.165.110.152' }}
+          USER: ${{ secrets.PROD_USER || secrets.SERVER_USER || 'jayv' }}
+          PORT: ${{ secrets.PROD_PORT || secrets.SERVER_PORT || '22' }}
+          TARGET_DIR: ${{ secrets.PROD_DEPLOY_PATH || secrets.SERVER_PATH || '/home/jayv/AutoChecker' }}
         if: env.SSH_KEY != '' && env.HOST != ''
         with:
           host: ${{ env.HOST }}

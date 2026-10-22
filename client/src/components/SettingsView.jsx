@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Browser } from '@capacitor/browser';
 import { registerPlugin, Capacitor } from '@capacitor/core';
-import { slackService } from '../services/slackService';
+import { slackService, DEFAULT_PROD_SERVER_URL, DEFAULT_PROD_SERVER_TOKEN } from '../services/slackService';
 
 const SlackAuth = registerPlugin('SlackAuth');
 import { 
@@ -50,8 +50,8 @@ export const SettingsView = ({
     autoReact: true,
     pollIntervalMs: 1000,
     soundEnabled: true,
-    serverUrl: '',
-    serverToken: 'vrijcheck_secret_2026',
+    serverUrl: DEFAULT_PROD_SERVER_URL,
+    serverToken: DEFAULT_PROD_SERVER_TOKEN,
     emojiMapping: {
       M1: '1-red',
       M2: '2-red',
@@ -539,7 +539,7 @@ export const SettingsView = ({
                   type="text"
                   value={formData.serverUrl}
                   onChange={(e) => handleChange('serverUrl', e.target.value)}
-                  placeholder="bijv. http://192.168.1.150:3001 of cloud URL (leeg = lokaal)"
+                  placeholder="bijv. http://82.165.110.152:3001"
                   className="bg-transparent outline-none w-full font-mono text-xs placeholder:text-neutral-500"
                 />
               </div>
@@ -556,7 +556,7 @@ export const SettingsView = ({
                   type="password"
                   value={formData.serverToken}
                   onChange={(e) => handleChange('serverToken', e.target.value)}
-                  placeholder="vrijcheck_secret_2026"
+                  placeholder="vc_prod_..."
                   className="bg-transparent outline-none w-full font-mono text-xs placeholder:text-neutral-500"
                 />
               </div>

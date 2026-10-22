@@ -5,6 +5,9 @@ import { getShiftForBlock, saveShiftBlock } from '../utils/shiftHelpers';
 const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
+export const DEFAULT_PROD_SERVER_URL = 'http://82.165.110.152:3001';
+export const DEFAULT_PROD_SERVER_TOKEN = 'REDACTED_API_KEY';
+
 export const DEFAULT_SETTINGS = {
   workspaceUrl: 'https://picnic.enterprise.slack.com',
   slackToken: '',
@@ -15,8 +18,8 @@ export const DEFAULT_SETTINGS = {
   autoReact: true,
   pollIntervalMs: 1000,
   soundEnabled: true,
-  serverUrl: '',
-  serverToken: 'vrijcheck_secret_2026',
+  serverUrl: DEFAULT_PROD_SERVER_URL,
+  serverToken: DEFAULT_PROD_SERVER_TOKEN,
   emojiMapping: {
     M1: '1-red',
     M2: '2-red',
@@ -149,8 +152,8 @@ class SlackService {
 
   async addReaction(channelId, messageTs, emoji, settings = null) {
     const currentSettings = settings || this.getSettings();
-    const serverUrl = (currentSettings?.serverUrl || '').trim();
-    const serverToken = currentSettings?.serverToken || 'vrijcheck_secret_2026';
+    const serverUrl = (currentSettings?.serverUrl || DEFAULT_PROD_SERVER_URL).trim();
+    const serverToken = currentSettings?.serverToken || DEFAULT_PROD_SERVER_TOKEN;
     const cleanEmoji = emoji.replace(/^:+|:+$/g, '');
 
     // 1. If 24/7 VPS server is configured, try server first (fast, sub-second reaction)
@@ -252,10 +255,12 @@ class SlackService {
   }
 
   async fetchServerStatus(serverUrl, serverToken) {
-    if (!serverUrl || !serverUrl.trim()) {
+    const targetUrl = (serverUrl || DEFAULT_PROD_SERVER_URL).trim();
+    const targetToken = serverToken || DEFAULT_PROD_SERVER_TOKEN;
+    if (!targetUrl) {
       return { ok: false, error: 'Geen VPS server URL geconfigureerd in Instellingen' };
     }
-    const cleanUrl = serverUrl.trim().replace(/\/+$/, '');
+    const cleanUrl = targetUrl.replace(/\/+$/, '');
     const startTime = Date.now();
     try {
       const controller = new AbortController();
@@ -263,7 +268,7 @@ class SlackService {
 
       const res = await fetch(`${cleanUrl}/api/status`, {
         headers: {
-          'x-api-key': serverToken || 'vrijcheck_secret_2026'
+          'x-api-key': targetToken
         },
         signal: controller.signal
       });
@@ -445,7 +450,15 @@ class SlackService {
     try {
       const raw = localStorage.getItem('vrijcheck_settings');
       if (raw) {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+        const parsed = JSON.parse(raw);
+        // Automatically default to production VPS if unset or legacy localhost
+        if (!parsed.serverUrl || parsed.serverUrl.includes('localhost')) {
+          parsed.serverUrl = DEFAULT_PROD_SERVER_URL;
+        }
+        if (!parsed.serverToken || parsed.serverToken === 'vrijcheck_secret_2026') {
+          parsed.serverToken = DEFAULT_PROD_SERVER_TOKEN;
+        }
+        return { ...DEFAULT_SETTINGS, ...parsed };
       }
     } catch (e) {}
     return { ...DEFAULT_SETTINGS };
@@ -457,11 +470,27 @@ class SlackService {
       localStorage.setItem('vrijcheck_settings', JSON.stringify(merged));
     } catch (e) {}
 
-    fetch('http://localhost:3001/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(merged)
-    }).catch(() => {});
+    const serverUrl = (merged.serverUrl || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const serverToken = merged.serverToken || DEFAULT_PROD_SERVER_TOKEN;
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': serverToken
+    };
+
+    if (Capacitor.isNativePlatform()) {
+      CapacitorHttp.post({
+        url: `${serverUrl}/api/settings`,
+        headers,
+        data: merged
+      }).catch(() => {});
+    } else {
+      fetch(`${serverUrl}/api/settings`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(merged)
+      }).catch(() => {});
+    }
 
     this.emitStatus();
     return merged;
@@ -486,8 +515,8 @@ class SlackService {
     } catch (e) {}
 
     const settings = this.getSettings();
-    const serverUrl = (settings.serverUrl || 'http://localhost:3001').replace(/\/+$/, '');
-    const serverToken = settings.serverToken || 'vrijcheck_secret_2026';
+    const serverUrl = (settings.serverUrl || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const serverToken = settings.serverToken || DEFAULT_PROD_SERVER_TOKEN;
 
     const headers = { 
       'Content-Type': 'application/json',
@@ -513,8 +542,8 @@ class SlackService {
    * Test connection to the 24/7 Vrijcheck Webserver using the Server Auth Token
    */
   async testServerConnection(url, token) {
-    const cleanUrl = (url || 'http://localhost:3001').replace(/\/+$/, '');
-    const cleanToken = (token || '').trim();
+    const cleanUrl = (url || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const cleanToken = (token || DEFAULT_PROD_SERVER_TOKEN).trim();
 
     try {
       if (Capacitor.isNativePlatform()) {
@@ -548,8 +577,8 @@ class SlackService {
    * Trigger Day-Planning-Sender emulation on the 24/7 server to benchmark latency
    */
   async emulateOnServer(url, token, options = {}) {
-    const cleanUrl = (url || 'http://localhost:3001').replace(/\/+$/, '');
-    const cleanToken = (token || '').trim();
+    const cleanUrl = (url || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const cleanToken = (token || DEFAULT_PROD_SERVER_TOKEN).trim();
 
     const payload = {
       period: options.period || 'OCHTEND',
