@@ -16,7 +16,8 @@ import {
   SlidersHorizontal,
   Bell
 } from 'lucide-react';
-import { getDayShifts } from '../utils/shiftHelpers';
+import { getShiftForBlock } from '../utils/shiftHelpers';
+import { SHIFT_BLOCKS } from '../utils/constants';
 import { SlackEmoji } from './SlackEmoji';
 
 export const HomeView = ({
@@ -93,11 +94,13 @@ export const HomeView = ({
   const todayKey = format(now, 'yyyy-MM-dd');
   const tomorrowKey = format(addDays(now, 1), 'yyyy-MM-dd');
 
-  const todayShifts = getDayShifts(shifts, todayKey);
-  const tomorrowShifts = getDayShifts(shifts, tomorrowKey);
+  const activeToday = SHIFT_BLOCKS
+    .map(b => getShiftForBlock(shifts, todayKey, b.id))
+    .filter(s => s.vrijcheckActive || s.reactionStatus?.success);
 
-  const activeToday = todayShifts.filter(s => s.vrijcheckActive || s.reactionStatus?.success);
-  const activeTomorrow = tomorrowShifts.filter(s => s.vrijcheckActive || s.reactionStatus?.success);
+  const activeTomorrow = SHIFT_BLOCKS
+    .map(b => getShiftForBlock(shifts, tomorrowKey, b.id))
+    .filter(s => s.vrijcheckActive || s.reactionStatus?.success);
   const hasActiveShifts = activeToday.length > 0 || activeTomorrow.length > 0;
 
   // VPS connection state

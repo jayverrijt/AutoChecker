@@ -1,7 +1,8 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { format, isSameDay } from 'date-fns';
-import { Calendar, Zap, Plus } from 'lucide-react';
-import { formatDay2Letters, getDayShifts } from '../utils/shiftHelpers';
+import { Check, Zap } from 'lucide-react';
+import { SHIFT_BLOCKS } from '../utils/constants';
+import { formatDay2Letters, getShiftForBlock } from '../utils/shiftHelpers';
 
 export const ScheduleView = ({
   days,
@@ -41,7 +42,7 @@ export const ScheduleView = ({
     touchStartYRef.current = null;
 
     // Primarily horizontal swipe of at least 45px
-    if (Math.abs(deltaX) > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) {
+    if (Math.abs(deltaX) > 45 && Math.abs(deltaY) < Math.abs(deltaX) * 0.8) {
       if (deltaX < 0) {
         // Swiped left -> Next week
         if (onNextWeek) {
@@ -64,16 +65,15 @@ export const ScheduleView = ({
     <div
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
-      className={`px-3.5 py-2 pb-28 overflow-y-auto select-none scroll-smooth transition-all ${swipeAnimation}`}
+      className={`px-3 sm:px-4 py-2 pb-28 overflow-y-auto select-none scroll-smooth transition-all ${swipeAnimation}`}
     >
-      {/* Days List matching Teamwork 1-to-1 */}
-      <div className="divide-y divide-[#22242f]">
+      {/* Days List with Sticky Date Headers & exactly the 5 blocks per day */}
+      <div className="divide-y divide-[#232532]">
         {days.map((dayDate) => {
           const dateKey = format(dayDate, 'yyyy-MM-dd');
           const dayNumber = format(dayDate, 'd');
           const dayName2 = formatDay2Letters(dayDate);
           const isToday = isSameDay(dayDate, selectedDate);
-          const dayShifts = getDayShifts(shifts, dateKey);
 
           return (
             <div
@@ -83,10 +83,10 @@ export const ScheduleView = ({
                 isToday ? 'bg-blue-950/10 -mx-1.5 px-1.5 rounded-xl' : ''
               }`}
             >
-              {/* Left Column: Day Number + 2 Letters Weekday (MA, DI, WO, DO, VR, ZA, ZO) */}
+              {/* Left Column: Big Day Number + 2 Letters Weekday (MA, DI, WO, DO, VR, ZA, ZO) */}
               <div
                 onClick={() => onSelectDate(dayDate)}
-                className="w-8 sm:w-9 pt-1 flex flex-col items-center cursor-pointer shrink-0 select-none group sticky top-2 z-10"
+                className="w-8 sm:w-9 pt-1.5 flex flex-col items-center cursor-pointer shrink-0 select-none group sticky top-2 z-10"
               >
                 <span
                   className={`text-xl font-bold leading-none tracking-tight transition-transform group-active:scale-90 ${
@@ -104,89 +104,83 @@ export const ScheduleView = ({
                 </span>
               </div>
 
-              {/* Right Column: Only the runner's actual scheduled shifts or "Geen shift" */}
-              <div className="flex-1 min-w-0 space-y-1.5">
-                {dayShifts.length > 0 ? (
-                  dayShifts.map((shift) => {
-                    const isRt = shift.isRt || shift.block === 'RT';
-                    const isVrijcheck = Boolean(shift.vrijcheckActive);
-                    const isReacted = Boolean(shift.reactionStatus?.success);
+              {/* Right Column: Exactly the 5 Shift Blocks (M1, M2, S1, S2, S3) matching screenshot */}
+              <div className="flex-1 min-w-0 space-y-2">
+                {SHIFT_BLOCKS.map((blockDef) => {
+                  const shift = getShiftForBlock(shifts, dateKey, blockDef.id);
+                  const isChecked = Boolean(shift?.vrijcheckActive);
+                  const isReacted = Boolean(shift?.reactionStatus?.success);
 
-                    return (
-                      <div
-                        key={shift.id || `${dateKey}-${shift.block}`}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => {
-                          onSelectDate(dayDate);
-                          onOpenShiftModal(dayDate, shift, shift.block);
-                        }}
-                        className={`w-full rounded-xl px-3.5 py-2.5 sm:py-3 flex items-center justify-between cursor-pointer transition-all active:scale-[0.98] select-none shadow-sm ${
-                          isReacted
-                            ? 'bg-gradient-to-r from-emerald-600 to-teal-700 text-white'
-                            : 'bg-[#214aa2] hover:bg-[#2552b3] text-white'
-                        }`}
-                      >
-                        {/* Left: Calendar icon + Time range + Status */}
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="text-white/80 p-0.5 shrink-0">
-                            <Calendar className="w-4 h-4 stroke-[2]" />
-                          </div>
-
-                          <div className="min-w-0">
-                            <div className="text-sm font-bold text-white tracking-tight leading-snug truncate">
-                              {shift.startTime} - {shift.endTime}
-                            </div>
-
-                            <div className="text-xs text-blue-200/80 font-medium leading-none mt-0.5 flex items-center gap-1.5">
-                              {isReacted ? (
-                                <span className="text-emerald-200 font-bold">
-                                  ✓ Voltooid ({shift.reactionStatus.latencyMs}ms)
-                                </span>
-                              ) : isVrijcheck ? (
-                                <span className="text-amber-300 font-bold flex items-center gap-1 animate-pulse">
-                                  <Zap className="w-3 h-3 fill-amber-300" />
-                                  Vrijcheck actief
-                                </span>
-                              ) : (
-                                <span>{shift.status || 'Voltooid'}</span>
-                              )}
-                            </div>
-                          </div>
+                  return (
+                    <div
+                      key={blockDef.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        onSelectDate(dayDate);
+                        onToggleVrijcheck(dateKey, blockDef.id);
+                      }}
+                      className={`w-full rounded-xl px-4 py-3 flex items-center justify-between cursor-pointer transition-all active:scale-[0.98] select-none border ${
+                        isReacted
+                          ? 'bg-[#10241b] border-emerald-500/70 text-white'
+                          : isChecked
+                          ? 'bg-[#152038] border-blue-500 text-white shadow-sm shadow-blue-500/25 ring-1 ring-blue-500/40'
+                          : 'bg-[#15161b] hover:bg-[#1a1b22] border-[#383a46] text-white'
+                      }`}
+                    >
+                      {/* Left: Square Checkbox + Time */}
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        {/* Square Checkbox (matching screenshot) */}
+                        <div
+                          className={`w-5 h-5 rounded-[4px] border-2 flex items-center justify-center shrink-0 transition-all ${
+                            isReacted
+                              ? 'bg-emerald-600 border-emerald-500 text-white'
+                              : isChecked
+                              ? 'bg-[#3171f7] border-[#3171f7] text-white'
+                              : 'border-white bg-transparent'
+                          }`}
+                        >
+                          {(isChecked || isReacted) && (
+                            <Check className="w-3.5 h-3.5 stroke-[3.5]" />
+                          )}
                         </div>
 
-                        {/* Right: Badge Pill (e.g. S2, S3, S1-S2-S3, RT) */}
-                        <div className="shrink-0 ml-2">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-md text-xs font-bold tracking-wide shadow-sm inline-block ${
-                              isRt
-                                ? 'bg-[#a22a7f] text-white'
-                                : 'bg-[#2e5bbd] text-white'
-                            }`}
-                          >
-                            {shift.block}
-                          </span>
+                        {/* Shift Times */}
+                        <div className="min-w-0">
+                          <div className="text-base font-bold text-white tracking-tight leading-none">
+                            {blockDef.defaultTime}
+                          </div>
+
+                          {isReacted ? (
+                            <div className="text-[10px] text-emerald-400 font-semibold mt-1">
+                              ✓ Vrij gereageerd ({shift.reactionStatus.latencyMs}ms)
+                            </div>
+                          ) : isChecked ? (
+                            <div className="text-[10px] text-blue-300 font-semibold mt-1 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping" />
+                              <span>Vrijcheck actief • {blockDef.postTime} release</span>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
-                    );
-                  })
-                ) : (
-                  /* Geen shift Card (Matches Teamwork Screenshot 2 e.g. 21 WO) */
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => {
-                      onSelectDate(dayDate);
-                      onOpenShiftModal(dayDate, null, 'M2');
-                    }}
-                    className="w-full bg-[#1c1d22] hover:bg-[#23242c] active:scale-[0.99] border border-white/5 rounded-xl px-4 py-3 flex items-center justify-between cursor-pointer transition-all select-none shadow-sm"
-                  >
-                    <span className="text-xs sm:text-sm font-medium text-neutral-400">
-                      Geen shift
-                    </span>
-                    <Plus className="w-3.5 h-3.5 text-neutral-500 opacity-60" />
-                  </div>
-                )}
+
+                      {/* Right: Pill Badge (M1, M2, S1, S2, S3) */}
+                      <div className="shrink-0 ml-3">
+                        <span
+                          className={`px-2.5 py-1 rounded-md text-xs font-bold tracking-wide transition-colors inline-block ${
+                            isReacted
+                              ? 'bg-emerald-600 text-white'
+                              : isChecked
+                              ? 'bg-[#3171f7] text-white'
+                              : 'bg-[#383a45] text-white'
+                          }`}
+                        >
+                          {blockDef.id}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );

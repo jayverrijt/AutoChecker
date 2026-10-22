@@ -1,6 +1,6 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { isCriticalListeningWindow } from '../utils/constants';
-import { getShiftForBlock, saveShiftBlock, DEFAULT_SCHEDULE } from '../utils/shiftHelpers';
+import { getShiftForBlock, saveShiftBlock } from '../utils/shiftHelpers';
 
 const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
@@ -26,7 +26,7 @@ export const DEFAULT_SETTINGS = {
   }
 };
 
-export const DEFAULT_SHIFTS = DEFAULT_SCHEDULE;
+export const DEFAULT_SHIFTS = {};
 
 class SlackService {
   constructor() {
@@ -477,7 +477,7 @@ class SlackService {
         }
       }
     } catch (e) {}
-    return DEFAULT_SCHEDULE;
+    return DEFAULT_SHIFTS;
   }
 
   saveShifts(shifts) {
