@@ -281,10 +281,20 @@ export class SlackBotManager {
   }
 
   isCriticalWindow() {
-    const now = new Date();
-    const h = now.getHours();
-    const m = now.getMinutes();
-    const s = now.getSeconds();
+    // Calculate current Dutch local time (Europe/Amsterdam)
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Amsterdam',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hour12: false
+    });
+    const parts = formatter.formatToParts(new Date());
+    const partMap = {};
+    for (const p of parts) partMap[p.type] = parseInt(p.value, 10);
+    const h = (partMap.hour || 0) % 24;
+    const m = partMap.minute || 0;
+    const s = partMap.second || 0;
 
     // 17:10 window (17:09:40 - 17:12:00) for morning shifts
     if (h === 17 && (m === 10 || m === 11 || (m === 9 && s >= 40))) {
