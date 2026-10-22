@@ -7,7 +7,7 @@
   "botSenderName": "Day-Planning-Sender",
   "autoReact": true,
   "pollIntervalMs": 1000,
-  "serverApiKey": "REDACTED_API_KEY",
+  "serverApiKey": "your_secret_server_api_key_here",
   "emojiMapping": {
     "M1": "1-red",
     "M2": "2-red",

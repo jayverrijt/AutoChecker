@@ -51,7 +51,7 @@ export const SettingsView = ({
     pollIntervalMs: 1000,
     soundEnabled: true,
     serverUrl: DEFAULT_PROD_SERVER_URL,
-    serverToken: DEFAULT_PROD_SERVER_TOKEN,
+    serverToken: '',
     emojiMapping: {
       M1: '1-red',
       M2: '2-red',

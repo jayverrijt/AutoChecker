@@ -19,7 +19,7 @@ export const app = express();
 export const server = http.createServer(app);
 
 export const getServerApiKey = () => {
-  return process.env.SERVER_API_KEY || db.getSettings().serverApiKey || 'REDACTED_API_KEY';
+  return process.env.SERVER_API_KEY || db.getSettings().serverApiKey || '';
 };
 
 export const io = new Server(server, {

@@ -9,7 +9,7 @@ services:
       - "3001:3001"
     environment:
       - PORT=3001
-      - SERVER_API_KEY=REDACTED_API_KEY
+      - SERVER_API_KEY=${SERVER_API_KEY:-your_secret_server_api_key_here}
       - NODE_ENV=production
     volumes:
       - ./data:/app/data

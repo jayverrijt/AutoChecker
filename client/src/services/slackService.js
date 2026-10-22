@@ -6,7 +6,7 @@ const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
 export const DEFAULT_PROD_SERVER_URL = 'http://82.165.110.152:3001';
-export const DEFAULT_PROD_SERVER_TOKEN = 'REDACTED_API_KEY';
+export const DEFAULT_PROD_SERVER_TOKEN = '';
 
 export const DEFAULT_SETTINGS = {
   workspaceUrl: 'https://picnic.enterprise.slack.com',

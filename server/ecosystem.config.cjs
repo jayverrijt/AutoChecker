@@ -10,7 +10,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3001,
-        SERVER_API_KEY: 'REDACTED_API_KEY'
+        SERVER_API_KEY: process.env.SERVER_API_KEY || ''
       }
     }
   ]
