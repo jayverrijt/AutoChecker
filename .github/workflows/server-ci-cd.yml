@@ -54,10 +54,10 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           SSH_KEY: ${{ secrets.FLEETHUB_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
-          HOST: ${{ secrets.FLEETHUB_HOST || secrets.SERVER_HOST }}
-          USER: ${{ secrets.FLEETHUB_USER || secrets.SERVER_USER || 'root' }}
+          HOST: ${{ secrets.FLEETHUB_HOST || secrets.SERVER_HOST || '82.165.110.152' }}
+          USER: ${{ secrets.FLEETHUB_USER || secrets.SERVER_USER || 'jayv' }}
           PORT: ${{ secrets.FLEETHUB_PORT || secrets.SERVER_PORT || '22' }}
-          TARGET_DIR: ${{ secrets.FLEETHUB_DEPLOY_PATH || secrets.SERVER_PATH || '/var/www/autochecker' }}
+          TARGET_DIR: ${{ secrets.FLEETHUB_DEPLOY_PATH || secrets.SERVER_PATH || '/home/jayv/AutoChecker' }}
         if: env.SSH_KEY != '' && env.HOST != ''
         with:
           host: ${{ env.HOST }}
@@ -76,16 +76,14 @@ jobs:
             git reset --hard origin/main
             
             cd server
-            npm ci --only=production
-
-            # Reload PM2 daemon if installed, otherwise start
-            if command -v pm2 >/dev/null 2>&1; then
+            if command -v docker >/dev/null 2>&1; then
+              docker compose up -d --build
+              echo "✅ Docker container vrijcheck-24-7 rebuilt and restarted successfully!"
+            elif command -v pm2 >/dev/null 2>&1; then
+              npm ci --only=production
               pm2 reload ecosystem.config.cjs --update-env || pm2 start ecosystem.config.cjs
               pm2 save
               echo "✅ PM2 process reloaded successfully!"
-            elif [ -f "../docker-compose.yml" ] && command -v docker >/dev/null 2>&1; then
-              docker compose up -d --build
-              echo "✅ Docker container restarted successfully!"
             else
-              echo "⚠️ Neither PM2 nor Docker found. Please configure process manager on target host."
+              echo "⚠️ Neither Docker nor PM2 found. Please check host environment."
             fi
