@@ -18,6 +18,9 @@ jobs:
   build-apk:
     name: Build Android APK
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout Code
@@ -39,7 +42,7 @@ jobs:
       - name: Install Client Dependencies
         run: |
           cd client
-          npm ci
+          npm ci --include=dev
 
       - name: Build Web Application
         run: |
@@ -49,7 +52,7 @@ jobs:
       - name: Sync Capacitor Android
         run: |
           cd client
-          npx cap sync android
+          npm run cap:sync || npx --yes @capacitor/cli sync android
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
