@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { db } from './db.js';
 import { SlackBotManager } from './slackBot.js';
@@ -254,9 +255,87 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// SPA wildcard fallback
+// SPA wildcard fallback or Server Status Dashboard
 app.get('*', (req, res) => {
-  res.sendFile(path.join(CLIENT_DIST, 'index.html'));
+  const clientIndex = path.join(CLIENT_DIST, 'index.html');
+  if (fs.existsSync(clientIndex)) {
+    return res.sendFile(clientIndex);
+  }
+
+  const st = botManager.getStatus();
+  const uptimeSeconds = Math.floor(process.uptime());
+  const hours = Math.floor(uptimeSeconds / 3600);
+  const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+  const seconds = uptimeSeconds % 60;
+  const uptimeStr = `${hours}u ${minutes}m ${seconds}s`;
+
+  res.send(`<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoChecker 24/7 VPS Daemon</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #0c0d12; color: #f3f4f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+    .card { background: #161722; border: 1px solid #272a38; border-radius: 20px; max-width: 480px; width: 100%; padding: 28px; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+    .title { font-size: 19px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 8px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 9999px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #34d399; font-size: 12px; font-weight: 700; }
+    .pulse { width: 8px; height: 8px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px #34d399; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .desc { font-size: 13px; color: #9ca3af; line-height: 1.5; margin-bottom: 16px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0; }
+    .item { background: #0f1017; border: 1px solid #20222f; border-radius: 12px; padding: 12px; }
+    .item-label { font-size: 10px; text-transform: uppercase; color: #8e95a5; font-weight: 700; letter-spacing: 0.5px; }
+    .item-val { font-size: 13px; font-weight: 700; color: #fff; margin-top: 4px; font-family: ui-monospace, SFMono-Regular, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .actions { display: flex; gap: 10px; margin-top: 24px; }
+    .btn { flex: 1; text-align: center; padding: 12px; border-radius: 12px; text-decoration: none; font-size: 13px; font-weight: 700; transition: transform 0.1s; }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: #e11d48; color: #fff; }
+    .btn-secondary { background: #222432; color: #d1d5db; border: 1px solid #323547; }
+    .footer { text-align: center; margin-top: 20px; font-size: 11px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="title">⚡ AutoChecker</div>
+      <div class="badge">
+        <span class="pulse"></span>
+        <span>${st.status === 'polling' ? 'Online & Polling' : 'Actief'}</span>
+      </div>
+    </div>
+    <p class="desc">De 24/7 achtergrondservice voor Teamwork Vrijcheck draait operationeel op deze Linux VPS.</p>
+    
+    <div class="grid">
+      <div class="item">
+        <div class="item-label">Slack Account</div>
+        <div class="item-val">${st.authInfo?.user || 'jayverrijt'}</div>
+      </div>
+      <div class="item">
+        <div class="item-label">Kanaal</div>
+        <div class="item-val">${st.channelName || '#nl-dist-runners-hlm'}</div>
+      </div>
+      <div class="item">
+        <div class="item-label">Target Bot</div>
+        <div class="item-val">${st.botSenderName || 'Day-Planning-Sender'}</div>
+      </div>
+      <div class="item">
+        <div class="item-label">Uptime</div>
+        <div class="item-val">${uptimeStr}</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <a href="https://github.com/jayverrijt/AutoChecker/releases" class="btn btn-primary" target="_blank">📱 Download App (APK)</a>
+      <a href="/api/health" class="btn btn-secondary">🔍 API Health</a>
+    </div>
+
+    <div class="footer">AutoChecker 24/7 Daemon &bull; Port 3001 &bull; REST API &amp; Socket.io</div>
+  </div>
+</body>
+</html>`);
 });
 
 // Start listening if run directly
