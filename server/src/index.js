@@ -285,6 +285,22 @@ app.post('/api/test/emulate-planner', async (req, res) => {
   }
 });
 
+// Direct APK Download route
+app.get('/download/apk', (req, res) => {
+  const possiblePaths = [
+    path.join(__dirname, '../../Teamwork-Vrijcheck-v1.0.6.apk'),
+    path.join(__dirname, '../data/Teamwork-Vrijcheck-v1.0.6.apk'),
+    path.join(__dirname, '../Teamwork-Vrijcheck-v1.0.6.apk'),
+    path.join(__dirname, '../../app-release.apk')
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      return res.download(p, 'Teamwork-Vrijcheck-v1.0.6.apk');
+    }
+  }
+  res.redirect('https://github.com/jayverrijt/AutoChecker/releases');
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   const users = db.getAllUsers();
@@ -372,7 +388,7 @@ app.get('*', (req, res) => {
     </div>
 
     <div class="actions">
-      <a href="https://github.com/jayverrijt/AutoChecker/releases" class="btn btn-primary" target="_blank">📱 Download App (APK)</a>
+      <a href="/download/apk" class="btn btn-primary">📱 Download APK (v1.0.6)</a>
       <a href="/api/health" class="btn btn-secondary">🔍 API Health</a>
     </div>
 
