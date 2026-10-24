@@ -19,7 +19,7 @@ import {
   MapPin,
   Bell
 } from 'lucide-react';
-import { slackService } from '../services/slackService';
+import { slackService, DEFAULT_PROD_SERVER_TOKEN } from '../services/slackService';
 import { notificationService } from '../services/notificationService';
 import { HubSelectorModal } from './HubSelectorModal';
 
@@ -57,7 +57,7 @@ export const MenuView = ({
     if (isServerConnected) {
       try {
         const serverUrl = (settings?.serverUrl || 'http://82.165.110.152:3001').replace(/\/+$/, '');
-        const serverToken = settings?.serverToken || 'vrijcheck-runner-secret-key-2026';
+        const serverToken = settings?.serverToken || DEFAULT_PROD_SERVER_TOKEN;
         await fetch(`${serverUrl}/api/bot/test-notification`, {
           method: 'POST',
           headers: {
