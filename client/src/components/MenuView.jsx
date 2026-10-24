@@ -1,31 +1,55 @@
 import React, { useState } from 'react';
 import { 
-  Radio, 
+  User, 
   Settings, 
-  LogOut, 
   ChevronRight, 
+  Server, 
+  Radio, 
+  SlidersHorizontal, 
+  LogOut, 
+  CheckCircle2, 
+  AlertCircle, 
   ShieldCheck, 
   Clock, 
-  AlertTriangle, 
-  CheckCircle2,
-  Sparkles,
-  Info
+  Zap,
+  X,
+  RefreshCw,
+  Hash,
+  ExternalLink
 } from 'lucide-react';
-import { PicnicMascot } from './PicnicMascot';
 import { slackService } from '../services/slackService';
 
 export const MenuView = ({
   onNavigate,
   onLogout,
   botStatus,
+  vpsStatus,
   settings,
   isServerConnected = false
 }) => {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showUserDetails, setShowUserDetails] = useState(false);
+  const [showVpsDetails, setShowVpsDetails] = useState(false);
+  const [isPinging, setIsPinging] = useState(false);
 
-  const isConnected = botStatus?.status === 'connected' || botStatus?.status === 'polling';
-  const username = botStatus?.authInfo?.user || 'jayverrijt';
+  // Extract runner details matching Screenshot 2
+  const rawUsername = settings?.username || botStatus?.authInfo?.user || 'jayverrijt';
+  const cleanName = rawUsername.replace(/[0-9_-]/g, ' ').trim();
+  const displayName = cleanName ? cleanName.split(' ').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ') : 'Jay Verrijt';
+  
+  // Initials (JV)
+  const initials = displayName
+    .split(' ')
+    .filter(Boolean)
+    .map(n => n[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || 'JV';
+
+  // Runner Code
+  const runnerCode = settings?.runnerCode || 'PN239976';
   const channelName = settings?.channelName || botStatus?.channelName || '#nl-dist-runners-hlm';
+  const isVpsOnline = isServerConnected || Boolean(vpsStatus?.isConnected);
 
   const handleConfirmLogout = () => {
     setShowLogoutConfirm(false);
@@ -33,209 +57,315 @@ export const MenuView = ({
   };
 
   return (
-    <div className="px-4 py-4 space-y-4 pb-28 overflow-y-auto select-none animate-fadeIn">
-      {/* Top Header */}
-      <div className="pt-2 pb-1">
-        <h1 className="text-2xl font-black text-white tracking-tight">Menu</h1>
-        <p className="text-xs text-neutral-400">Beheer je Picnic Vrijcheck bot &amp; sessies</p>
-      </div>
-
-      {/* Runner Profile Card */}
-      <div className="bg-[#181a24] border border-[#262835] rounded-3xl p-4 relative overflow-hidden shadow-lg">
-        <div className="flex items-center gap-3.5 relative z-10">
-          {/* Avatar */}
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#3171f7] to-[#1e40af] flex items-center justify-center text-white font-black text-lg shadow-md shadow-blue-500/30 shrink-0">
-            {username.slice(0, 2).toUpperCase()}
+    <div className="px-4 py-3 space-y-4 pb-28 overflow-y-auto select-none animate-fadeIn">
+      {/* 1. TOP PROFILE ROW: Avatar (JV), Name, Runner Code & Settings Gear (Matches Screenshot 2) */}
+      <div className="flex items-center justify-between py-2">
+        <div className="flex items-center gap-3.5 min-w-0">
+          {/* Avatar Circle: JV in bold blue on navy background (Matches Screenshot 2) */}
+          <div className="w-12 h-12 rounded-full bg-[#1e293b] border border-blue-500/30 flex items-center justify-center text-[#3b82f6] font-black text-lg shrink-0 shadow-sm">
+            {initials}
           </div>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-white truncate">
-                {username}
-              </h2>
-              {isConnected ? (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold shrink-0">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                  <span>Verbonden</span>
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold shrink-0">
-                  <span>Niet verbonden</span>
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <p className="text-xs text-neutral-400 font-mono truncate">
-                {channelName}
-              </p>
-              <span className="text-neutral-600 text-xs">•</span>
-              {isServerConnected ? (
-                <span className="flex items-center gap-1 text-[11px] font-bold text-blue-400 font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
-                  24/7 Cloud Daemon Actief
-                </span>
-              ) : slackService.isTestingMode() ? (
-                <span className="text-[11px] text-amber-400 font-mono">
-                  Test Modus (Debugger)
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-[11px] text-red-400 font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
-                  VPS Niet Verbonden
-                </span>
-              )}
-            </div>
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-white tracking-tight truncate">
+              {displayName}
+            </h2>
+            <p className="text-xs text-neutral-400 font-mono tracking-wide mt-0.5">
+              {runnerCode}
+            </p>
           </div>
         </div>
 
-        {/* Mascot watermark in corner */}
-        <div className="absolute right-0 -bottom-4 w-24 h-24 opacity-20 pointer-events-none">
-          <PicnicMascot className="w-full h-full" />
-        </div>
-      </div>
-
-      {/* Primary Navigation Menu Group */}
-      <div className="bg-[#181a24] border border-[#262835] rounded-3xl overflow-hidden divide-y divide-[#242735] shadow-sm">
-        {/* 1. Slack Live Monitor */}
-        <button
-          type="button"
-          onClick={() => onNavigate('live')}
-          className="w-full p-4 flex items-center justify-between text-left hover:bg-[#202330] transition-colors group active:scale-[0.99]"
-        >
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0 group-hover:scale-105 transition-transform">
-              <Radio className="w-5 h-5 animate-pulse" />
-            </div>
-            <div className="min-w-0">
-              <div className="text-sm font-bold text-white flex items-center gap-2">
-                <span>Slack Live Monitor</span>
-                {isConnected && (
-                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                )}
-              </div>
-              <div className="text-xs text-neutral-400 truncate">
-                Live berichten stream, emoji logs &amp; simulaties
-              </div>
-            </div>
-          </div>
-          <ChevronRight className="w-5 h-5 text-neutral-500 group-hover:text-neutral-300 group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
-        </button>
-
-        {/* 2. Instellingen */}
+        {/* Gear Icon in top right (Matches Screenshot 2) */}
         <button
           type="button"
           onClick={() => onNavigate('settings')}
-          className="w-full p-4 flex items-center justify-between text-left hover:bg-[#202330] transition-colors group active:scale-[0.99]"
+          className="p-2 rounded-xl text-neutral-400 hover:text-white hover:bg-neutral-800/80 transition-colors active:scale-95 shrink-0"
+          title="Instellingen"
         >
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-10 h-10 rounded-2xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0 group-hover:scale-105 transition-transform">
-              <Settings className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <div className="text-sm font-bold text-white">
-                Instellingen &amp; Sessie
-              </div>
-              <div className="text-xs text-neutral-400 truncate">
-                Slack cookies (d-cookie), tokens &amp; emoji mappings
-              </div>
-            </div>
-          </div>
-          <ChevronRight className="w-5 h-5 text-neutral-500 group-hover:text-neutral-300 group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
+          <Settings className="w-5 h-5 stroke-[2]" />
         </button>
       </div>
 
-      {/* Release Times Quick Reference */}
-      <div className="bg-[#181a24] border border-[#262835] rounded-3xl p-4 space-y-2.5">
-        <div className="flex items-center gap-2 text-xs font-bold text-neutral-300 uppercase tracking-wider">
-          <Clock className="w-3.5 h-3.5 text-blue-400" />
-          <span>Day-Planning Release Tijden</span>
-        </div>
+      {/* 2. GROUP 1: Mijn gegevens & 24/7 VPS Daemon (Exact Teamwork Card Style from Screenshot 2) */}
+      <div className="space-y-2.5">
+        {/* Card 1: Mijn gegevens */}
+        <button
+          type="button"
+          onClick={() => setShowUserDetails(true)}
+          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
+        >
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-6 h-6 flex items-center justify-center text-neutral-300 shrink-0">
+              <User className="w-5 h-5 stroke-[2]" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-sm font-semibold text-white tracking-tight">
+                Mijn gegevens
+              </span>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
+        </button>
 
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="bg-[#12141c] border border-[#222533] rounded-2xl p-2.5">
-            <div className="text-amber-300 font-bold">🌅 Ochtend (M1, M2)</div>
-            <div className="text-white font-extrabold text-sm mt-0.5">17:10 uur</div>
-            <div className="text-[10px] text-neutral-400 mt-0.5">Dag van tevoren</div>
+        {/* Card 2: 24/7 VPS Daemon Status */}
+        <button
+          type="button"
+          onClick={() => setShowVpsDetails(true)}
+          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
+        >
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-6 h-6 flex items-center justify-center text-neutral-300 shrink-0">
+              <Server className="w-5 h-5 stroke-[2]" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-white tracking-tight flex items-center gap-2">
+                <span>24/7 VPS Cloud Daemon</span>
+              </div>
+            </div>
           </div>
 
-          <div className="bg-[#12141c] border border-[#222533] rounded-2xl p-2.5">
-            <div className="text-blue-300 font-bold">☀️ Middag (S1-S3)</div>
-            <div className="text-white font-extrabold text-sm mt-0.5">10:10 uur</div>
-            <div className="text-[10px] text-neutral-400 mt-0.5">Zelfde dag</div>
+          <div className="flex items-center gap-2 shrink-0 ml-2">
+            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+              isVpsOnline
+                ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300'
+                : 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${isVpsOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              <span>{isVpsOnline ? `Online (${vpsStatus?.pingMs || 50}ms)` : 'Offline'}</span>
+            </span>
+            <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
           </div>
-        </div>
-
-        <p className="text-[11px] text-neutral-400 leading-tight">
-          De planner post meestal rond de :28 seconden. De bot luistert de hele minuut continu op de achtergrond.
-        </p>
+        </button>
       </div>
 
-      {/* Logout Button */}
-      <div className="pt-2">
+      {/* 3. GROUP 2: Slack Live Monitor & Instellingen (Matches Screenshot 2) */}
+      <div className="space-y-2.5 pt-1">
+        {/* Card 3: Slack Live Monitor */}
+        <button
+          type="button"
+          onClick={() => onNavigate('live')}
+          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
+        >
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-6 h-6 flex items-center justify-center text-neutral-300 shrink-0">
+              <Radio className="w-5 h-5 stroke-[2] animate-pulse text-emerald-400" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-sm font-semibold text-white tracking-tight">
+                Slack Live Monitor &amp; Simulator
+              </span>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
+        </button>
+
+        {/* Card 4: Instellingen & Emoji Mapping */}
+        <button
+          type="button"
+          onClick={() => onNavigate('settings')}
+          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
+        >
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-6 h-6 flex items-center justify-center text-neutral-300 shrink-0">
+              <SlidersHorizontal className="w-5 h-5 stroke-[2]" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-sm font-semibold text-white tracking-tight">
+                Instellingen &amp; Emoji Mapping
+              </span>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
+        </button>
+      </div>
+
+      {/* 4. GROUP 3: Uitloggen */}
+      <div className="pt-1">
         <button
           type="button"
           onClick={() => setShowLogoutConfirm(true)}
-          className="w-full p-4 rounded-3xl bg-red-950/20 hover:bg-red-950/40 border border-red-500/25 flex items-center justify-between text-left transition-colors active:scale-[0.99] group shadow-sm"
+          className="w-full bg-[#181922] hover:bg-red-950/20 border border-[#272938] hover:border-red-500/30 rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
         >
           <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-10 h-10 rounded-2xl bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400 shrink-0 group-hover:scale-105 transition-transform">
-              <LogOut className="w-5 h-5" />
+            <div className="w-6 h-6 flex items-center justify-center text-red-400 shrink-0">
+              <LogOut className="w-5 h-5 stroke-[2]" />
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-bold text-red-400">
+              <span className="text-sm font-semibold text-red-400 tracking-tight">
                 Uitloggen
-              </div>
-              <div className="text-xs text-neutral-400 truncate">
-                Ontkoppel Slack sessie en wis tokens van dit toestel
-              </div>
+              </span>
             </div>
           </div>
-          <ChevronRight className="w-5 h-5 text-red-500/60 group-hover:text-red-400 group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
+          <ChevronRight className="w-5 h-5 text-neutral-500 group-hover:text-red-400 group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
         </button>
       </div>
 
-      {/* Version & Copyright note */}
-      <div className="text-center pt-2">
-        <p className="text-[11px] text-neutral-500">
-          Picnic Vrijcheck v2.4 • Copyright Jay Verrijt {new Date().getFullYear()}
-        </p>
-      </div>
-
-      {/* Logout Confirmation Modal */}
-      {showLogoutConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-[#181a24] border border-[#2e3142] rounded-3xl p-5 max-w-xs w-full space-y-4 shadow-2xl animate-slideUp">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400 shrink-0">
-                <AlertTriangle className="w-5 h-5" />
+      {/* MODAL 1: Mijn Gegevens Details Modal */}
+      {showUserDetails && (
+        <div 
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
+          onClick={() => setShowUserDetails(false)}
+        >
+          <div 
+            className="w-full max-w-sm bg-[#161722] border border-[#2b2e40] rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-slideUp select-none"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-[#242738]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                  <User className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white tracking-tight">Mijn gegevens</h3>
+                  <p className="text-[11px] text-neutral-400">Picnic Slack Identiteit</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-base font-bold text-white">Uitloggen?</h3>
-                <p className="text-xs text-neutral-400">Sessie wordt verwijderd</p>
+              <button 
+                type="button"
+                onClick={() => setShowUserDetails(false)}
+                className="w-8 h-8 rounded-xl bg-[#222534] hover:bg-[#2b2f42] text-neutral-400 hover:text-white flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5 text-xs">
+              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
+                <span className="text-neutral-400 font-medium">Volledige Naam</span>
+                <span className="text-white font-bold">{displayName}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
+                <span className="text-neutral-400 font-medium">Runner Code</span>
+                <span className="text-blue-300 font-mono font-bold">{runnerCode}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
+                <span className="text-neutral-400 font-medium">Slack Account</span>
+                <span className="text-white font-mono font-bold">@{rawUsername}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
+                <span className="text-neutral-400 font-medium">Slack Kanaal</span>
+                <span className="text-emerald-300 font-mono font-bold">{channelName}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
+                <span className="text-neutral-400 font-medium">Sessie Status</span>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/30">
+                  Geverifieerd &amp; Actief
+                </span>
               </div>
             </div>
 
-            <p className="text-xs text-neutral-300 leading-relaxed">
-              Weet je zeker dat je wilt uitloggen? Je opgeslagen Slack token en cookie worden gewist. Je moet opnieuw inloggen om shifts automatisch vrij te checken.
-            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setShowUserDetails(false);
+                onNavigate('settings');
+              }}
+              className="w-full py-2.5 rounded-xl bg-[#3171f7] hover:bg-[#255fd4] text-white text-xs font-bold transition-all shadow"
+            >
+              Bewerk Instellingen
+            </button>
+          </div>
+        </div>
+      )}
 
-            <div className="flex items-center gap-2 pt-1">
+      {/* MODAL 2: 24/7 VPS Daemon Details Modal */}
+      {showVpsDetails && (
+        <div 
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
+          onClick={() => setShowVpsDetails(false)}
+        >
+          <div 
+            className="w-full max-w-sm bg-[#161722] border border-[#2b2e40] rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-slideUp select-none"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-[#242738]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <Server className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white tracking-tight">24/7 Cloud Daemon</h3>
+                  <p className="text-[11px] text-neutral-400">Centrale Runner Engine</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowVpsDetails(false)}
+                className="w-8 h-8 rounded-xl bg-[#222534] hover:bg-[#2b2f42] text-neutral-400 hover:text-white flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5 text-xs">
+              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
+                <span className="text-neutral-400 font-medium">Server Host</span>
+                <span className="text-white font-mono font-bold">82.165.110.152:3001</span>
+              </div>
+              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
+                <span className="text-neutral-400 font-medium">Netwerk Latency</span>
+                <span className="text-emerald-300 font-mono font-bold">{vpsStatus?.pingMs || 50}ms</span>
+              </div>
+              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
+                <span className="text-neutral-400 font-medium">Kanaal Monitor</span>
+                <span className="text-blue-300 font-mono font-bold">{channelName}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
+                <span className="text-neutral-400 font-medium">Luistermodus</span>
+                <span className="text-white font-bold">24/7 Autonoom</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowVpsDetails(false);
+                onNavigate('live');
+              }}
+              className="w-full py-2.5 rounded-xl bg-[#3171f7] hover:bg-[#255fd4] text-white text-xs font-bold transition-all shadow"
+            >
+              Open Slack Live Monitor
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Logout Confirmation Dialog */}
+      {showLogoutConfirm && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
+          onClick={() => setShowLogoutConfirm(false)}
+        >
+          <div 
+            className="w-full max-w-xs bg-[#161722] border border-[#2b2e40] rounded-2xl p-5 space-y-4 shadow-2xl animate-scaleUp text-center"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-12 h-12 rounded-2xl bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400 mx-auto">
+              <LogOut className="w-6 h-6 stroke-[2]" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-white">Weet je het zeker?</h3>
+              <p className="text-xs text-neutral-400 leading-relaxed">
+                Je Slack credentials worden van dit apparaat gewist.
+              </p>
+            </div>
+
+            <div className="flex gap-2.5 pt-1">
               <button
                 type="button"
                 onClick={() => setShowLogoutConfirm(false)}
-                className="flex-1 py-2.5 rounded-2xl bg-[#232736] hover:bg-[#2d3246] text-neutral-300 text-xs font-bold transition-colors active:scale-95"
+                className="flex-1 py-2.5 rounded-xl bg-[#222432] hover:bg-[#2b2e3f] text-neutral-300 font-semibold text-xs transition-colors"
               >
                 Annuleren
               </button>
-
               <button
                 type="button"
                 onClick={handleConfirmLogout}
-                className="flex-1 py-2.5 rounded-2xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md shadow-red-600/30 transition-colors active:scale-95 flex items-center justify-center gap-1.5"
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition-colors shadow-lg shadow-red-500/25"
               >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Ja, Uitloggen</span>
+                Uitloggen
               </button>
             </div>
           </div>

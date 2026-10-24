@@ -901,6 +901,7 @@ export function App() {
               vpsStatus={vpsStatus}
               onRefreshVps={refreshVpsStatus}
               shifts={shifts}
+              history={history}
               currentDate={currentDate}
               onTestReaction={() => handleTestRealReaction('3-red')}
               settings={settings}
@@ -947,6 +948,7 @@ export function App() {
               onNavigate={(tab) => setActiveTab(tab)}
               onLogout={handleLogout}
               botStatus={botStatus}
+              vpsStatus={vpsStatus}
               settings={settings}
               isServerConnected={isVpsOnline}
             />
