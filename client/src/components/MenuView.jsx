@@ -34,17 +34,24 @@ export const MenuView = ({
 
   // Extract runner details matching Screenshot 2
   const rawUsername = settings?.username || botStatus?.authInfo?.user || 'jayverrijt';
-  const cleanName = rawUsername.replace(/[0-9_-]/g, ' ').trim();
-  const displayName = cleanName ? cleanName.split(' ').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ') : 'Jay Verrijt';
+  let displayName = settings?.displayName;
+  if (!displayName) {
+    if (rawUsername.toLowerCase().includes('jay')) {
+      displayName = 'Jay Verrijt';
+    } else {
+      const cleanName = rawUsername.replace(/[0-9_-]/g, ' ').trim();
+      displayName = cleanName ? cleanName.split(' ').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ') : 'Jay Verrijt';
+    }
+  }
   
   // Initials (JV)
-  const initials = displayName
+  const initials = settings?.initials || (displayName
     .split(' ')
     .filter(Boolean)
     .map(n => n[0])
     .join('')
     .slice(0, 2)
-    .toUpperCase() || 'JV';
+    .toUpperCase()) || 'JV';
 
   // Runner Code
   const runnerCode = settings?.runnerCode || 'PN239976';
