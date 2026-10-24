@@ -649,6 +649,37 @@ export function App() {
     } catch (err) {}
   };
 
+  const handleSelectHub = async (newHubCode, newChannelName) => {
+    const updatedSettings = {
+      ...(settings || slackService.getSettings()),
+      hubCode: newHubCode,
+      channelName: newChannelName
+    };
+    await handleSaveSettings(updatedSettings);
+    try { navigator.vibrate?.(20); } catch (_) {}
+    sounds.playPop?.();
+    setToast({
+      type: 'success',
+      title: `Hub Gewijzigd: ${newHubCode}`,
+      message: `Actief Slack kanaal is nu ${newChannelName}`
+    });
+    setTimeout(() => setToast(null), 3500);
+
+    // Verify channel connectivity with new hub
+    try {
+      const res = await slackService.testConnection(updatedSettings);
+      if (res?.ok && res.auth) {
+        setBotStatus((prev) => ({
+          ...prev,
+          status: 'connected',
+          authInfo: res.auth,
+          channelName: newChannelName,
+          channelId: updatedSettings.channelId
+        }));
+      }
+    } catch (_) {}
+  };
+
   const handleReconnect = async () => {
     try {
       const res = await slackService.testConnection(settings);
@@ -951,6 +982,7 @@ export function App() {
               vpsStatus={vpsStatus}
               settings={settings}
               isServerConnected={isVpsOnline}
+              onSelectHub={handleSelectHub}
             />
           </div>
         )}

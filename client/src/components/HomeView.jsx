@@ -36,14 +36,17 @@ export const HomeView = ({
 
   // Extract display name & first name for greeting
   const rawUsername = settings?.username || botStatus?.authInfo?.user || 'Jay Verrijt';
-  let firstName = 'Jay';
-  if (settings?.displayName) {
-    firstName = settings.displayName.split(' ')[0];
-  } else if (rawUsername.toLowerCase().includes('jay')) {
-    firstName = 'Jay';
-  } else {
-    const cleanName = rawUsername.replace(/[0-9_-]/g, ' ').trim();
-    firstName = cleanName.charAt(0).toUpperCase() + cleanName.slice(1).split(' ')[0] || 'Jay';
+  const slackProfile = botStatus?.authInfo?.profile || {};
+  let firstName = settings?.firstName || slackProfile.firstName || (settings?.realName ? settings.realName.split(' ')[0] : null);
+  if (!firstName) {
+    if (settings?.displayName) {
+      firstName = settings.displayName.split(' ')[0];
+    } else if (rawUsername.toLowerCase().includes('jay')) {
+      firstName = 'Jay';
+    } else {
+      const cleanName = rawUsername.replace(/[0-9_-]/g, ' ').trim();
+      firstName = cleanName.charAt(0).toUpperCase() + cleanName.slice(1).split(' ')[0] || 'Jay';
+    }
   }
 
   // Find all shifts that have either vrijcheckActive === true or reactionStatus !== null

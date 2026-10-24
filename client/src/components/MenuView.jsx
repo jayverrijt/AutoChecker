@@ -15,9 +15,11 @@ import {
   X,
   RefreshCw,
   Hash,
-  ExternalLink
+  ExternalLink,
+  MapPin
 } from 'lucide-react';
 import { slackService } from '../services/slackService';
+import { HubSelectorModal } from './HubSelectorModal';
 
 export const MenuView = ({
   onNavigate,
@@ -25,16 +27,19 @@ export const MenuView = ({
   botStatus,
   vpsStatus,
   settings,
-  isServerConnected = false
+  isServerConnected = false,
+  onSelectHub
 }) => {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showUserDetails, setShowUserDetails] = useState(false);
   const [showVpsDetails, setShowVpsDetails] = useState(false);
+  const [showHubSelector, setShowHubSelector] = useState(false);
   const [isPinging, setIsPinging] = useState(false);
 
-  // Extract runner details matching Screenshot 2
+  // Extract runner details from Slack profile / settings
   const rawUsername = settings?.username || botStatus?.authInfo?.user || 'jayverrijt';
-  let displayName = settings?.displayName;
+  const slackProfile = botStatus?.authInfo?.profile || {};
+  let displayName = settings?.realName || slackProfile.realName || settings?.displayName;
   if (!displayName) {
     if (rawUsername.toLowerCase().includes('jay')) {
       displayName = 'Jay Verrijt';
@@ -43,6 +48,11 @@ export const MenuView = ({
       displayName = cleanName ? cleanName.split(' ').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ') : 'Jay Verrijt';
     }
   }
+
+  const avatarUrl = settings?.avatarUrl || slackProfile.avatarUrl || null;
+  const channelName = settings?.channelName || botStatus?.channelName || '#nl-dist-runners-hlm';
+  const activeHubCode = (settings?.hubCode || channelName.replace(/^#?nl-dist-runners-/, '') || 'HLM').toUpperCase();
+  const detectedChannels = botStatus?.authInfo?.runnerChannels || [];
   
   // Initials (JV)
   const initials = settings?.initials || (displayName
@@ -53,9 +63,7 @@ export const MenuView = ({
     .slice(0, 2)
     .toUpperCase()) || 'JV';
 
-  // Runner Code
-  const runnerCode = settings?.runnerCode || 'PN239976';
-  const channelName = settings?.channelName || botStatus?.channelName || '#nl-dist-runners-hlm';
+  // Hub Code replaces Runner Code
   const isVpsOnline = isServerConnected || Boolean(vpsStatus?.isConnected);
 
   const handleConfirmLogout = () => {
@@ -65,25 +73,42 @@ export const MenuView = ({
 
   return (
     <div className="px-4 py-3 space-y-4 pb-28 overflow-y-auto select-none animate-fadeIn">
-      {/* 1. TOP PROFILE ROW: Avatar (JV), Name, Runner Code & Settings Gear (Matches Screenshot 2) */}
+      {/* 1. TOP PROFILE ROW: Avatar, Name, Hub Code (replaces runnerCode) & Settings Gear */}
       <div className="flex items-center justify-between py-2">
         <div className="flex items-center gap-3.5 min-w-0">
-          {/* Avatar Circle: JV in bold blue on navy background (Matches Screenshot 2) */}
-          <div className="w-12 h-12 rounded-full bg-[#1e293b] border border-blue-500/30 flex items-center justify-center text-[#3b82f6] font-black text-lg shrink-0 shadow-sm">
-            {initials}
-          </div>
+          {/* Avatar Circle: Real Slack Profile Avatar with JV fallback */}
+          {avatarUrl ? (
+            <img 
+              src={avatarUrl} 
+              alt={displayName} 
+              className="w-12 h-12 rounded-full object-cover border border-blue-500/30 shrink-0 shadow-sm"
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
+          ) : (
+            <div className="w-12 h-12 rounded-full bg-[#1e293b] border border-blue-500/30 flex items-center justify-center text-[#3b82f6] font-black text-lg shrink-0 shadow-sm">
+              {initials}
+            </div>
+          )}
 
           <div className="min-w-0">
             <h2 className="text-base font-bold text-white tracking-tight truncate">
               {displayName}
             </h2>
-            <p className="text-xs text-neutral-400 font-mono tracking-wide mt-0.5">
-              {runnerCode}
-            </p>
+            {/* Replaces Personeelsnummer with Hub Code */}
+            <button
+              type="button"
+              onClick={() => setShowHubSelector(true)}
+              className="text-xs text-neutral-400 font-medium tracking-wide mt-0.5 flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer group text-left"
+            >
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span className="font-semibold text-neutral-200 group-hover:text-blue-400">Hub {activeHubCode}</span>
+              <span className="text-neutral-500">•</span>
+              <span className="font-mono text-[11px] text-neutral-400 truncate max-w-[130px]">{channelName}</span>
+            </button>
           </div>
         </div>
 
-        {/* Gear Icon in top right (Matches Screenshot 2) */}
+        {/* Gear Icon in top right */}
         <button
           type="button"
           onClick={() => onNavigate('settings')}
@@ -146,9 +171,37 @@ export const MenuView = ({
         </button>
       </div>
 
-      {/* 3. GROUP 2: Slack Live Monitor & Instellingen (Matches Screenshot 2) */}
+      {/* 3. GROUP 2: Hub Wisselen (Menu Optie 3), Slack Live Monitor & Instellingen */}
       <div className="space-y-2.5 pt-1">
-        {/* Card 3: Slack Live Monitor */}
+        {/* Card 3: Distributie Hub Wisselen (Menu Optie 3) */}
+        <button
+          type="button"
+          onClick={() => setShowHubSelector(true)}
+          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
+        >
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-6 h-6 flex items-center justify-center text-blue-400 shrink-0">
+              <MapPin className="w-5 h-5 stroke-[2]" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-white tracking-tight flex items-center gap-2">
+                <span>Distributie Hub</span>
+              </div>
+              <p className="text-[11px] text-neutral-400 font-mono mt-0.5 truncate">
+                {channelName}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 ml-2">
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-500/15 border border-blue-500/30 text-blue-300">
+              <span>Hub {activeHubCode}</span>
+            </span>
+            <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
+          </div>
+        </button>
+
+        {/* Card 4: Slack Live Monitor */}
         <button
           type="button"
           onClick={() => onNavigate('live')}
@@ -167,7 +220,7 @@ export const MenuView = ({
           <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
         </button>
 
-        {/* Card 4: Instellingen & Emoji Mapping */}
+        {/* Card 5: Instellingen & Emoji Mapping */}
         <button
           type="button"
           onClick={() => onNavigate('settings')}
@@ -378,6 +431,18 @@ export const MenuView = ({
           </div>
         </div>
       )}
+
+      {/* Hub Selector Modal */}
+      <HubSelectorModal
+        isOpen={showHubSelector}
+        onClose={() => setShowHubSelector(false)}
+        currentChannelName={channelName}
+        currentHubCode={activeHubCode}
+        detectedChannels={detectedChannels}
+        onSelectHub={(newCode, newChan) => {
+          onSelectHub?.(newCode, newChan);
+        }}
+      />
     </div>
   );
 };

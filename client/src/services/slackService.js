@@ -15,6 +15,11 @@ export const DEFAULT_SETTINGS = {
   slackCookie: '',
   channelName: '#nl-dist-runners-hlm',
   channelId: 'CAM2MJTA9',
+  hubCode: 'HLM',
+  realName: 'Jay Verrijt',
+  displayName: 'Jay Verrijt',
+  firstName: 'Jay',
+  avatarUrl: null,
   botSenderName: 'Day-Planning-Sender',
   autoReact: true,
   pollIntervalMs: 1000,
@@ -127,11 +132,91 @@ class SlackService {
           };
         }
 
+        // 1b. Fetch User Profile from Slack (Real Name, Avatar, etc.)
+        let profile = null;
+        try {
+          const profileRes = await CapacitorHttp.get({
+            url: 'https://slack.com/api/users.profile.get',
+            headers,
+            connectTimeout: 4000,
+            readTimeout: 4000
+          });
+          if (profileRes.data?.ok && profileRes.data.profile) {
+            const p = profileRes.data.profile;
+            profile = {
+              realName: p.real_name || p.display_name || authData.user,
+              displayName: p.display_name || p.real_name || authData.user,
+              firstName: p.first_name || (p.real_name ? p.real_name.split(' ')[0] : 'Jay'),
+              lastName: p.last_name || '',
+              avatarUrl: p.image_192 || p.image_512 || p.image_72 || null,
+              email: p.email || ''
+            };
+            this.saveSettings({
+              realName: profile.realName,
+              displayName: profile.displayName,
+              firstName: profile.firstName,
+              avatarUrl: profile.avatarUrl
+            });
+          }
+        } catch (e) {
+          console.warn('Profile fetch warning:', e);
+        }
+
+        // 1c. Discover Runner Channels (#nl-dist-runners-*)
+        let runnerChannels = [];
+        try {
+          const countsRes = await CapacitorHttp.get({
+            url: 'https://slack.com/api/client.counts',
+            headers,
+            connectTimeout: 4000,
+            readTimeout: 4000
+          });
+          if (countsRes.data?.ok && Array.isArray(countsRes.data.channels)) {
+            for (const ch of countsRes.data.channels) {
+              if (ch.id) {
+                try {
+                  const infoRes = await CapacitorHttp.get({
+                    url: `https://slack.com/api/conversations.info?channel=${ch.id}`,
+                    headers,
+                    connectTimeout: 3000,
+                    readTimeout: 3000
+                  });
+                  if (infoRes.data?.ok && infoRes.data.channel) {
+                    const cname = infoRes.data.channel.name || '';
+                    if (cname.startsWith('nl-dist-runners-') || cname.includes('runners')) {
+                      const code = cname.replace(/^nl-dist-runners-/, '').toUpperCase();
+                      runnerChannels.push({
+                        id: ch.id,
+                        name: `#${cname}`,
+                        hubCode: code
+                      });
+                    }
+                  }
+                } catch (_) {}
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Runner channels check warning:', e);
+        }
+
+        // If no channels detected from client.counts, ensure current channel is included
+        if (runnerChannels.length === 0 && currentSettings.channelName) {
+          const curClean = currentSettings.channelName.replace(/^#?nl-dist-runners-/, '').toUpperCase();
+          runnerChannels.push({
+            id: currentSettings.channelId || 'CAM2MJTA9',
+            name: currentSettings.channelName,
+            hubCode: curClean || 'HLM'
+          });
+        }
+
         this.cachedAuth = {
           user: authData.user,
           team: authData.team || 'Picnic',
           userId: authData.user_id,
-          teamId: authData.team_id
+          teamId: authData.team_id,
+          profile,
+          runnerChannels
         };
 
         // 2. Test Channel
