@@ -72,6 +72,8 @@ export function App() {
     error: null
   });
 
+  const isVpsOnline = isServerConnected || Boolean(vpsStatus?.isConnected);
+
   const refreshVpsStatus = async () => {
     const currentSettings = settings || slackService.getSettings();
     const serverUrl = currentSettings?.serverUrl || DEFAULT_PROD_SERVER_URL;
@@ -874,7 +876,7 @@ export function App() {
         )}
 
         {/* Standalone VPS Offline Notice */}
-        {!isServerConnected && !slackService.isTestingMode() && (
+        {!isVpsOnline && !slackService.isTestingMode() && (
           <div className="bg-amber-950/90 border-b border-amber-500/40 px-3.5 py-1.5 flex items-center justify-between text-[11px] text-amber-200 z-30 shrink-0">
             <div className="flex items-center gap-2 min-w-0">
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0"></span>
@@ -946,7 +948,7 @@ export function App() {
               onLogout={handleLogout}
               botStatus={botStatus}
               settings={settings}
-              isServerConnected={isServerConnected}
+              isServerConnected={isVpsOnline}
             />
           </div>
         )}
