@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
-import { StatusBar } from '@capacitor/status-bar';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { appStorage } from './utils/storage';
 import { 
   addDays, 
   startOfWeek, 
@@ -104,13 +105,15 @@ export function App() {
     return () => clearInterval(interval);
   }, [settings?.serverUrl, settings?.serverToken]);
 
-  // Hide native Android status bar on launch
+  // Configure native Android status bar with dark background
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
       try {
-        StatusBar.hide();
+        StatusBar.setStyle({ style: Style.Dark });
+        StatusBar.setBackgroundColor({ color: '#0e0f12' });
+        StatusBar.show();
       } catch (err) {
-        console.warn('Could not hide status bar', err);
+        console.warn('Could not configure status bar', err);
       }
     }
   }, []);
@@ -212,6 +215,7 @@ export function App() {
 
     const initAuthAndServices = async () => {
       setIsAuthChecking(true);
+      await appStorage.init();
       const initialShifts = slackService.getShifts();
       const initialSettings = slackService.getSettings();
       setShifts(initialShifts);
@@ -247,8 +251,10 @@ export function App() {
           setIsAuthenticated(true);
           setAuthError(null);
 
-          // Start local background polling loop immediately!
-          startVrijcheckPoller();
+          // Only start local background poller if debugger/test mode is active
+          if (slackService.isTestingMode()) {
+            startVrijcheckPoller();
+          }
         } else {
           // Token is revoked or session is expired
           setIsAuthenticated(false);
@@ -259,7 +265,9 @@ export function App() {
         if (isMounted) {
           if (token) {
             setIsAuthenticated(true);
-            startVrijcheckPoller();
+            if (slackService.isTestingMode()) {
+              startVrijcheckPoller();
+            }
           } else {
             setIsAuthenticated(false);
             setAuthError('Geen geldige sessie gevonden.');
@@ -321,8 +329,10 @@ export function App() {
       });
 
       s.on('shifts:updated', (data) => {
-        setShifts(data);
-        slackService.saveShifts(data);
+        if (data && typeof data === 'object' && !data.error && Object.keys(data).length > 0) {
+          setShifts(data);
+          slackService.saveShifts(data);
+        }
       });
 
       s.on('settings:updated', (data) => {
@@ -384,7 +394,18 @@ export function App() {
       // Initial fetch with auth header
       fetch(`${serverUrl}/api/shifts`, { headers: authHeaders })
         .then((r) => r.json())
-        .then(setShifts)
+        .then((data) => {
+          if (data && typeof data === 'object' && !data.error && Object.keys(data).length > 0) {
+            setShifts(data);
+            slackService.saveShifts(data);
+          } else {
+            // Server has no shifts recorded yet for this user: sync local shifts up to server!
+            const local = slackService.getShifts();
+            if (local && Object.keys(local).length > 0) {
+              slackService.saveShifts(local);
+            }
+          }
+        })
         .catch(() => {});
 
       fetch(`${serverUrl}/api/settings`, { headers: authHeaders })
@@ -523,10 +544,18 @@ export function App() {
     setModalCurrentShift(shiftData);
     slackService.saveShifts(updated);
 
+    const currentSettings = settings || slackService.getSettings();
+    const serverUrl = (currentSettings?.serverUrl || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const serverToken = currentSettings?.serverToken || DEFAULT_PROD_SERVER_TOKEN;
+
     try {
-      await fetch(`${SOCKET_URL}/api/shifts`, {
+      await fetch(`${serverUrl}/api/shifts`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': serverToken,
+          'x-user-id': slackService.getUserId()
+        },
         body: JSON.stringify({ dateKey, blockId, shift: shiftData })
       });
     } catch (err) {}
@@ -537,20 +566,36 @@ export function App() {
     setShifts(updated);
     slackService.saveShifts(updated);
 
+    const currentSettings = settings || slackService.getSettings();
+    const serverUrl = (currentSettings?.serverUrl || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const serverToken = currentSettings?.serverToken || DEFAULT_PROD_SERVER_TOKEN;
+
     try {
-      await fetch(`${SOCKET_URL}/api/shifts`, {
+      await fetch(`${serverUrl}/api/shifts`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': serverToken,
+          'x-user-id': slackService.getUserId()
+        },
         body: JSON.stringify({ dateKey, blockId, shift: updated[dateKey]?.[blockId] })
       });
     } catch (err) {}
   };
 
   const handleSimulate = async (simPayload) => {
+    const currentSettings = settings || slackService.getSettings();
+    const serverUrl = (currentSettings?.serverUrl || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const serverToken = currentSettings?.serverToken || DEFAULT_PROD_SERVER_TOKEN;
+
     try {
-      const res = await fetch(`${SOCKET_URL}/api/simulate`, {
+      const res = await fetch(`${serverUrl}/api/simulate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': serverToken,
+          'x-user-id': slackService.getUserId()
+        },
         body: JSON.stringify(simPayload)
       });
       return await res.json();
@@ -560,8 +605,19 @@ export function App() {
   };
 
   const handleClearHistory = async () => {
+    const currentSettings = settings || slackService.getSettings();
+    const serverUrl = (currentSettings?.serverUrl || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const serverToken = currentSettings?.serverToken || DEFAULT_PROD_SERVER_TOKEN;
+
     try {
-      await fetch(`${SOCKET_URL}/api/history/clear`, { method: 'POST' });
+      await fetch(`${serverUrl}/api/history/clear`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': serverToken,
+          'x-user-id': slackService.getUserId()
+        }
+      });
       setHistory([]);
     } catch (err) {
       console.error('Error clearing history:', err);
@@ -572,14 +628,22 @@ export function App() {
     const merged = slackService.saveSettings(newSettings);
     setSettings(merged);
 
+    const currentSettings = merged || slackService.getSettings();
+    const serverUrl = (currentSettings?.serverUrl || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const serverToken = currentSettings?.serverToken || DEFAULT_PROD_SERVER_TOKEN;
+
     try {
-      const res = await fetch(`${SOCKET_URL}/api/settings`, {
+      const res = await fetch(`${serverUrl}/api/settings`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': serverToken,
+          'x-user-id': slackService.getUserId()
+        },
         body: JSON.stringify(newSettings)
       });
       const updated = await res.json();
-      if (updated) setSettings(updated);
+      if (updated && !updated.error) setSettings(updated);
     } catch (err) {}
   };
 
@@ -809,9 +873,26 @@ export function App() {
           </div>
         )}
 
+        {/* Standalone VPS Offline Notice */}
+        {!isServerConnected && !slackService.isTestingMode() && (
+          <div className="bg-amber-950/90 border-b border-amber-500/40 px-3.5 py-1.5 flex items-center justify-between text-[11px] text-amber-200 z-30 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0"></span>
+              <span className="truncate font-medium">VPS Server Niet Verbonden • Standalone vereist VPS</span>
+            </div>
+            <button
+              type="button"
+              onClick={refreshVpsStatus}
+              className="px-2 py-0.5 rounded-md bg-amber-500/25 hover:bg-amber-500/40 text-amber-100 font-bold text-[10px] shrink-0 ml-2 active:scale-95"
+            >
+              Opnieuw
+            </button>
+          </div>
+        )}
+
         {/* Content based on active tab */}
         {activeTab === 'home' && (
-          <div className="flex-1 overflow-y-auto pt-2 sm:pt-3">
+          <div className="flex-1 overflow-y-auto pt-notch-safe">
             <HomeView
               onNavigate={(tab) => setActiveTab(tab)}
               botStatus={botStatus}
@@ -859,7 +940,7 @@ export function App() {
         )}
 
         {activeTab === 'menu' && (
-          <div className="flex-1 overflow-y-auto pt-3.5 sm:pt-4">
+          <div className="flex-1 overflow-y-auto pt-notch-safe">
             <MenuView
               onNavigate={(tab) => setActiveTab(tab)}
               onLogout={handleLogout}
@@ -871,7 +952,7 @@ export function App() {
         )}
 
         {activeTab === 'live' && (
-          <div className="flex-1 overflow-y-auto pt-3.5 sm:pt-4">
+          <div className="flex-1 overflow-y-auto pt-notch-safe">
             <div className="px-4 py-2 border-b border-[#22242a] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <button
@@ -902,7 +983,7 @@ export function App() {
         )}
 
         {activeTab === 'settings' && (
-          <div className="flex-1 overflow-y-auto pt-3.5 sm:pt-4">
+          <div className="flex-1 overflow-y-auto pt-notch-safe">
             <div className="px-4 py-2 border-b border-[#22242a] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <button

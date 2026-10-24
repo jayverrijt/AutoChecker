@@ -18,6 +18,7 @@ import {
   MessageSquare
 } from 'lucide-react';
 import { SlackEmoji } from './SlackEmoji';
+import { slackService } from '../services/slackService';
 import { format } from 'date-fns';
 import { nl } from 'date-fns/locale';
 
@@ -86,8 +87,18 @@ export const SlackLiveView = ({
             <div>
               <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
                 <span>Picnic Vrijcheck Bot</span>
-                <span className="text-[10px] bg-neutral-800 text-neutral-300 px-1.5 py-0.5 rounded font-mono">
-                  Lokaal
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                  botStatus?.connected || botStatus?.status === 'connected' || botStatus?.status === 'polling'
+                    ? 'bg-blue-900/60 text-blue-300 border border-blue-500/30'
+                    : slackService.isTestingMode()
+                    ? 'bg-amber-900/60 text-amber-300 border border-amber-500/30'
+                    : 'bg-red-900/60 text-red-300 border border-red-500/30'
+                }`}>
+                  {botStatus?.connected || botStatus?.status === 'connected' || botStatus?.status === 'polling'
+                    ? '24/7 VPS Cloud'
+                    : slackService.isTestingMode()
+                    ? 'Test Modus (Debugger)'
+                    : 'VPS Offline'}
                 </span>
               </h2>
               <div className="text-xs text-neutral-400 flex items-center gap-1 mt-0.5">

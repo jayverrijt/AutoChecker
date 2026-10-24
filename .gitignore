@@ -6,6 +6,7 @@ node_modules/
 # Build Outputs
 dist/
 build/
+*.apk
 client/dist/
 client/android/app/build/
 client/android/.gradle/

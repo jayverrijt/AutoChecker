@@ -91,10 +91,13 @@ button, [role="button"], input, a {
   background: #3b3d47;
 }
 
-/* iOS & Android Safe Areas */
+/* iOS & Android Safe Areas & Notch Clearance */
 .pb-safe {
   padding-bottom: max(env(safe-area-inset-bottom, 16px), 16px);
 }
 .pt-safe {
   padding-top: max(env(safe-area-inset-top, 24px), 24px);
+}
+.pt-notch-safe {
+  padding-top: max(env(safe-area-inset-top, 0px), 42px);
 }

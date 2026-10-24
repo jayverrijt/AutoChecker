@@ -12,6 +12,7 @@ import {
   Info
 } from 'lucide-react';
 import { PicnicMascot } from './PicnicMascot';
+import { slackService } from '../services/slackService';
 
 export const MenuView = ({
   onNavigate,
@@ -74,9 +75,14 @@ export const MenuView = ({
                   <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
                   24/7 Cloud Daemon Actief
                 </span>
+              ) : slackService.isTestingMode() ? (
+                <span className="text-[11px] text-amber-400 font-mono">
+                  Test Modus (Debugger)
+                </span>
               ) : (
-                <span className="text-[11px] text-neutral-500 font-mono">
-                  Lokale Modus
+                <span className="flex items-center gap-1 text-[11px] text-red-400 font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
+                  VPS Niet Verbonden
                 </span>
               )}
             </div>

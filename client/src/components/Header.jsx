@@ -48,7 +48,7 @@ export const Header = ({
   });
 
   return (
-    <header className="pt-2 sm:pt-3 pb-0 bg-[#0e0f12] select-none sticky top-0 z-20 backdrop-blur-md">
+    <header className="pt-notch-safe pb-0 bg-[#0e0f12] select-none sticky top-0 z-20 backdrop-blur-md">
       {/* Top row: Month Dropdown & Header Action Icons (Matches Teamwork screenshot exactly) */}
       <div className="flex items-center justify-between px-4 pb-2">
         {/* Month Dropdown -> Opens DatePickerModal */}

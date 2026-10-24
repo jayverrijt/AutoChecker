@@ -240,10 +240,19 @@ export const db = {
     }
 
     const userShifts = db.getShifts(id);
-    userShifts[dateKey] = {
-      ...(userShifts[dateKey] || {}),
-      ...shiftData
-    };
+    const targetBlock = shiftData?.block;
+    if (targetBlock && ['M1', 'M2', 'S1', 'S2', 'S3'].includes(targetBlock)) {
+      userShifts[dateKey] = userShifts[dateKey] || {};
+      userShifts[dateKey][targetBlock] = {
+        ...(userShifts[dateKey][targetBlock] || {}),
+        ...shiftData
+      };
+    } else {
+      userShifts[dateKey] = {
+        ...(userShifts[dateKey] || {}),
+        ...shiftData
+      };
+    }
     db.saveShifts(id, userShifts);
     return userShifts;
   },

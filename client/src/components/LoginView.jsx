@@ -100,7 +100,7 @@ export const LoginView = ({
   return (
     <div className="min-h-screen h-[100dvh] bg-[#0c0d11] text-neutral-100 flex flex-col justify-between p-6 select-none overflow-y-auto animate-fadeIn">
       {/* Top Section: Picnic Branding & Hero */}
-      <div className="pt-8 sm:pt-4 flex flex-col items-center text-center space-y-4 max-w-sm mx-auto w-full">
+      <div className="pt-notch-safe sm:pt-8 flex flex-col items-center text-center space-y-4 max-w-sm mx-auto w-full">
         {/* Animated App Icon */}
         <div className="relative">
           <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-[#e11d48] to-[#9f1239] flex items-center justify-center shadow-xl shadow-red-500/25 border border-red-400/30">

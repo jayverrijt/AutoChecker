@@ -1,12 +1,13 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { isCriticalListeningWindow } from '../utils/constants';
 import { getShiftForBlock, saveShiftBlock } from '../utils/shiftHelpers';
+import { appStorage } from '../utils/storage';
 
 const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
 export const DEFAULT_PROD_SERVER_URL = 'http://82.165.110.152:3001';
-export const DEFAULT_PROD_SERVER_TOKEN = '';
+export const DEFAULT_PROD_SERVER_TOKEN = 'vc_prod_1464e0be3d28f34112b6a5bfe545eb04';
 
 export const DEFAULT_SETTINGS = {
   workspaceUrl: 'https://picnic.enterprise.slack.com',
@@ -42,15 +43,28 @@ class SlackService {
     this.isPollingActive = false;
   }
 
+  isTestingMode() {
+    try {
+      if (typeof window !== 'undefined') {
+        if (window.__DEBUG_MODE__) return true;
+        if (window.location && window.location.search && window.location.search.includes('debug=true')) return true;
+        if (appStorage.getItem('vrijcheck_debug_mode') === 'true') return true;
+      }
+      return Boolean(import.meta.env?.DEV);
+    } catch (_) {
+      return false;
+    }
+  }
+
   getUserId() {
     if (this.cachedAuth?.userId) {
       return this.cachedAuth.userId;
     }
     try {
-      const stored = localStorage.getItem('vrijcheck_user_id');
+      const stored = appStorage.getItem('vrijcheck_user_id');
       if (stored && stored.trim().length > 0) return stored.trim();
       const generated = 'runner_' + Math.random().toString(36).substring(2, 9);
-      localStorage.setItem('vrijcheck_user_id', generated);
+      appStorage.setItem('vrijcheck_user_id', generated);
       return generated;
     } catch (e) {
       return 'runner_default';
@@ -60,7 +74,7 @@ class SlackService {
   setUserId(userId) {
     if (userId) {
       try {
-        localStorage.setItem('vrijcheck_user_id', userId.trim());
+        appStorage.setItem('vrijcheck_user_id', userId.trim());
       } catch (e) {}
     }
   }
@@ -323,8 +337,12 @@ class SlackService {
     }
   }
 
-  // Real-time Standalone Background Poller with 17:10 & 10:10 Critical Window Boost
+  // Real-time Background Poller (Alleen actief in test/debugger modus!)
   startPolling(onReactionCallback = null) {
+    if (!this.isTestingMode()) {
+      console.log('[SLACK SERVICE] Standalone modus: lokale toestel-poller is uitgeschakeld. 24/7 VPS server handelt alle reacties af.');
+      return;
+    }
     this.stopPolling();
     this.isPollingActive = true;
     if (onReactionCallback) {
@@ -473,7 +491,7 @@ class SlackService {
 
   getSettings() {
     try {
-      const raw = localStorage.getItem('vrijcheck_settings');
+      const raw = appStorage.getItem('vrijcheck_settings');
       if (raw) {
         const parsed = JSON.parse(raw);
         // Automatically default to production VPS if unset or legacy localhost
@@ -497,7 +515,7 @@ class SlackService {
       merged.username = this.cachedAuth.user;
     }
     try {
-      localStorage.setItem('vrijcheck_settings', JSON.stringify(merged));
+      appStorage.setItem('vrijcheck_settings', JSON.stringify(merged));
     } catch (e) {}
 
     const serverUrl = (merged.serverUrl || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
@@ -529,10 +547,10 @@ class SlackService {
 
   getShifts() {
     try {
-      const raw = localStorage.getItem('vrijcheck_shifts');
+      const raw = appStorage.getItem('vrijcheck_shifts');
       if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && Object.keys(parsed).length > 0) {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
           return parsed;
         }
       }
@@ -541,8 +559,9 @@ class SlackService {
   }
 
   saveShifts(shifts) {
+    if (!shifts || typeof shifts !== 'object') return;
     try {
-      localStorage.setItem('vrijcheck_shifts', JSON.stringify(shifts));
+      appStorage.setItem('vrijcheck_shifts', JSON.stringify(shifts));
     } catch (e) {}
 
     const settings = this.getSettings();
@@ -560,13 +579,13 @@ class SlackService {
         url: `${serverUrl}/api/shifts/bulk`,
         headers,
         data: { shifts, userId: this.getUserId() }
-      }).catch(() => {});
+      }).catch((err) => console.warn('[SAVE SHIFTS] Native HTTP error:', err));
     } else {
       fetch(`${serverUrl}/api/shifts/bulk`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ shifts, userId: this.getUserId() })
-      }).catch(() => {});
+      }).catch((err) => console.warn('[SAVE SHIFTS] Web fetch error:', err));
     }
   }
 
