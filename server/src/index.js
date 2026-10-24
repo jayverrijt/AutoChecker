@@ -298,14 +298,23 @@ app.post('/api/test/emulate-planner', async (req, res) => {
 // Direct APK Download route
 app.get('/download/apk', (req, res) => {
   const possiblePaths = [
-    path.join(__dirname, '../../Teamwork-Vrijcheck-v1.0.6.apk'),
+    path.join(__dirname, '../data/Teamwork-Vrijcheck.apk'),
+    path.join(__dirname, '../../Teamwork-Vrijcheck.apk'),
+    path.join(__dirname, '../Teamwork-Vrijcheck.apk'),
     path.join(__dirname, '../data/Teamwork-Vrijcheck-v1.0.6.apk'),
-    path.join(__dirname, '../Teamwork-Vrijcheck-v1.0.6.apk'),
+    path.join(__dirname, '../../Teamwork-Vrijcheck-v1.0.6.apk'),
     path.join(__dirname, '../../app-release.apk')
   ];
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) {
-      return res.download(p, 'Teamwork-Vrijcheck-v1.0.6.apk');
+      return res.download(p, 'Teamwork-Vrijcheck.apk');
+    }
+  }
+  const dataDir = path.join(__dirname, '../data');
+  if (fs.existsSync(dataDir)) {
+    const files = fs.readdirSync(dataDir).filter(f => f.endsWith('.apk'));
+    if (files.length > 0) {
+      return res.download(path.join(dataDir, files[0]), 'Teamwork-Vrijcheck.apk');
     }
   }
   res.redirect('https://github.com/jayverrijt/AutoChecker/releases');
@@ -398,7 +407,7 @@ app.get('*', (req, res) => {
     </div>
 
     <div class="actions">
-      <a href="/download/apk" class="btn btn-primary">📱 Download APK (v1.0.6)</a>
+      <a href="/download/apk" class="btn btn-primary">📱 Download APK (Nieuwste Versie)</a>
       <a href="/api/health" class="btn btn-secondary">🔍 API Health</a>
     </div>
 
