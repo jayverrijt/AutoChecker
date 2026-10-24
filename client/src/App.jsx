@@ -27,6 +27,7 @@ import { SlackEmoji } from './components/SlackEmoji';
 import { sounds } from './utils/audio';
 import { Smartphone, Monitor, CheckCircle2, Zap, ChevronLeft } from 'lucide-react';
 import { slackService, DEFAULT_PROD_SERVER_URL, DEFAULT_PROD_SERVER_TOKEN } from './services/slackService';
+import { notificationService } from './services/notificationService';
 import { getShiftForBlock, saveShiftBlock, toggleVrijcheckForBlock } from './utils/shiftHelpers';
 
 const SOCKET_URL = DEFAULT_PROD_SERVER_URL;
@@ -107,8 +108,9 @@ export function App() {
     return () => clearInterval(interval);
   }, [settings?.serverUrl, settings?.serverToken]);
 
-  // Configure native Android status bar with dark background
+  // Configure native Android status bar with dark background & init notifications
   useEffect(() => {
+    notificationService.init();
     if (Capacitor.isNativePlatform()) {
       try {
         StatusBar.setStyle({ style: Style.Dark });
@@ -119,6 +121,13 @@ export function App() {
       }
     }
   }, []);
+
+  // Schedule native 1-minute-before advance notifications for upcoming shifts
+  useEffect(() => {
+    if (shifts && Object.keys(shifts).length > 0) {
+      notificationService.scheduleAdvanceShiftAlerts(shifts, settings?.channelName || '#nl-dist-runners-hlm');
+    }
+  }, [shifts, settings?.channelName]);
 
   // Manage Android Hardware / Gesture Back Button
   const isModalOpenRef = useRef(isModalOpen);
@@ -384,6 +393,53 @@ export function App() {
         }
 
         setTimeout(() => setToast(null), 5000);
+      });
+
+      // 1 Minute Before: Triggered when API starts listening for the Slack message
+      s.on('bot:listening_started', (event) => {
+        setToast({
+          type: 'info',
+          title: '⚡ Vrijcheck Luistermodus Gestart',
+          message: event.message || `De API is 1m van tevoren begonnen met luisteren voor ${event.target || 'de shift'}.`
+        });
+        setTimeout(() => setToast(null), 6000);
+
+        notificationService.notifyListeningStarted({
+          target: event.target,
+          channel: event.channel,
+          period: event.period
+        });
+      });
+
+      // Completed: Triggered when reaction is finished, instructing user to check Slack
+      s.on('bot:vrijcheck_completed', (event) => {
+        if (event.reactionSuccess) {
+          sounds.playSuccess();
+          setToast({
+            type: 'success',
+            title: '✅ Vrijcheck Voltooid!',
+            message: 'Kijk nu op Slack om je shift te controleren.',
+            emoji: event.emoji
+          });
+          setTimeout(() => setToast(null), 6000);
+
+          notificationService.notifyVrijcheckCompleted({
+            success: true,
+            emoji: event.emoji
+          });
+        } else {
+          setToast({
+            type: 'error',
+            title: '⚠️ Vrijcheck Mislukt',
+            message: event.message || 'Kijk nu op Slack!'
+          });
+          setTimeout(() => setToast(null), 6000);
+
+          notificationService.notifyVrijcheckCompleted({
+            success: false,
+            error: event.error
+          });
+        }
       });
 
       setSocket(s);

@@ -16,9 +16,11 @@ import {
   RefreshCw,
   Hash,
   ExternalLink,
-  MapPin
+  MapPin,
+  Bell
 } from 'lucide-react';
 import { slackService } from '../services/slackService';
+import { notificationService } from '../services/notificationService';
 import { HubSelectorModal } from './HubSelectorModal';
 
 export const MenuView = ({
@@ -34,7 +36,41 @@ export const MenuView = ({
   const [showUserDetails, setShowUserDetails] = useState(false);
   const [showVpsDetails, setShowVpsDetails] = useState(false);
   const [showHubSelector, setShowHubSelector] = useState(false);
+  const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [isPinging, setIsPinging] = useState(false);
+
+  const handleTestNotification = async (type) => {
+    if (type === 'listening_started') {
+      await notificationService.notifyListeningStarted({
+        target: '17:10',
+        channel: channelName,
+        period: 'OCHTEND'
+      });
+    } else {
+      await notificationService.notifyVrijcheckCompleted({
+        success: true,
+        emoji: '1-red'
+      });
+    }
+
+    // Also trigger on VPS if connected
+    if (isServerConnected) {
+      try {
+        const serverUrl = (settings?.serverUrl || 'http://82.165.110.152:3001').replace(/\/+$/, '');
+        const serverToken = settings?.serverToken || 'vrijcheck-runner-secret-key-2026';
+        await fetch(`${serverUrl}/api/bot/test-notification`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': serverToken
+          },
+          body: JSON.stringify({ type })
+        });
+      } catch (err) {
+        console.warn('VPS test notification trigger error:', err);
+      }
+    }
+  };
 
   // Extract runner details from Slack profile / settings
   const rawUsername = settings?.username || botStatus?.authInfo?.user || 'jayverrijt';
@@ -220,7 +256,29 @@ export const MenuView = ({
           <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
         </button>
 
-        {/* Card 5: Instellingen & Emoji Mapping */}
+        {/* Card 5: Notificaties & Alerts */}
+        <button
+          type="button"
+          onClick={() => setShowNotificationModal(true)}
+          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
+        >
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-6 h-6 flex items-center justify-center text-amber-400 shrink-0">
+              <Bell className="w-5 h-5 stroke-[2]" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-sm font-semibold text-white tracking-tight">
+                Notificaties &amp; Alerts
+              </span>
+              <div className="text-[11px] text-neutral-400 truncate">
+                1m vooraf luistermodus &amp; check Slack alert
+              </div>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
+        </button>
+
+        {/* Card 6: Instellingen & Emoji Mapping */}
         <button
           type="button"
           onClick={() => onNavigate('settings')}
@@ -426,6 +484,100 @@ export const MenuView = ({
                 className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition-colors shadow-lg shadow-red-500/25"
               >
                 Uitloggen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: Notificaties & Alerts Modal */}
+      {showNotificationModal && (
+        <div 
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
+          onClick={() => setShowNotificationModal(false)}
+        >
+          <div 
+            className="w-full max-w-sm bg-[#161722] border border-[#2b2e40] rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-slideUp select-none"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-[#242738]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <Bell className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white tracking-tight">Notificaties &amp; Alerts</h3>
+                  <p className="text-[11px] text-neutral-400">Automatische meldingen bij vrijchecks</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowNotificationModal(false)}
+                className="w-8 h-8 rounded-full bg-[#20222f] hover:bg-[#282b3c] flex items-center justify-center text-neutral-400 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 pt-1">
+              <div className="p-3 rounded-xl bg-[#1b1c28] border border-[#2c2f42] space-y-1.5">
+                <div className="flex items-center gap-2 text-xs font-semibold text-amber-300">
+                  <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>1. 1 Minuut van tevoren</span>
+                </div>
+                <p className="text-[11px] text-neutral-300 leading-relaxed">
+                  Om 10:09 en 17:09 (1m voor de vrijcheck) stuurt de bot je direct een melding dat de API begonnen is met luisteren naar het Slack vrijcheck-bericht.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-[#1b1c28] border border-[#2c2f42] space-y-1.5">
+                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-300">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>2. Vrijcheck Voltooid</span>
+                </div>
+                <p className="text-[11px] text-neutral-300 leading-relaxed">
+                  Zodra er bliksemsnel gereageerd is op Slack, ontvang je direct een bevestigingsmelding dat de actie voltooid is en dat je op Slack moet kijken.
+                </p>
+              </div>
+
+              {/* Test buttons */}
+              <div className="pt-2 space-y-2">
+                <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider px-1">
+                  Test Notificaties op dit toestel:
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleTestNotification('listening_started')}
+                  className="w-full py-2.5 px-3.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 font-semibold text-xs flex items-center justify-between transition-all active:scale-95"
+                >
+                  <span className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-400" />
+                    <span>Test: 1m Luistermodus Alert</span>
+                  </span>
+                  <span className="text-[10px] bg-amber-500/30 px-2 py-0.5 rounded text-amber-100 font-mono">Test</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleTestNotification('vrijcheck_completed')}
+                  className="w-full py-2.5 px-3.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-200 font-semibold text-xs flex items-center justify-between transition-all active:scale-95"
+                >
+                  <span className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>Test: Voltooid Alert (Kijk op Slack)</span>
+                  </span>
+                  <span className="text-[10px] bg-emerald-500/30 px-2 py-0.5 rounded text-emerald-100 font-mono">Test</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setShowNotificationModal(false)}
+                className="w-full py-2.5 bg-[#252837] hover:bg-[#2e3245] text-white rounded-xl text-xs font-semibold transition-colors active:scale-95"
+              >
+                Sluiten
               </button>
             </div>
           </div>

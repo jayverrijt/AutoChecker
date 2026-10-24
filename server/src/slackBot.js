@@ -7,6 +7,7 @@ export class SlackBotManager {
     this.pollTimer = null;
     this.lastCheckedTs = null;
     this.processedMessageIds = new Set();
+    this.lastListeningNotificationMinute = null;
     this.status = 'disconnected'; // 'connected' | 'polling' | 'disconnected' | 'error' | 'simulated'
     this.lastError = null;
     this.resolvedChannelId = null;
@@ -296,15 +297,56 @@ export class SlackBotManager {
     const m = partMap.minute || 0;
     const s = partMap.second || 0;
 
-    // 17:10 window (17:09:40 - 17:12:00) for morning shifts
-    if (h === 17 && (m === 10 || m === 11 || (m === 9 && s >= 40))) {
+    // Check & trigger 1-minute-before listening notification
+    this.checkListeningNotification(h, m);
+
+    // 17:10 window (starts 1m before at 17:09:00 - 17:12:00) for morning shifts
+    if (h === 17 && (m === 9 || m === 10 || m === 11)) {
       return { active: true, target: '17:10', period: 'OCHTEND', delayMs: 400 };
     }
-    // 10:10 window (10:09:40 - 10:12:00) for afternoon shifts
-    if (h === 10 && (m === 10 || m === 11 || (m === 9 && s >= 40))) {
+    // 10:10 window (starts 1m before at 10:09:00 - 10:12:00) for afternoon shifts
+    if (h === 10 && (m === 9 || m === 10 || m === 11)) {
       return { active: true, target: '10:10', period: 'MIDDAG', delayMs: 400 };
     }
     return { active: false, delayMs: 1000 };
+  }
+
+  checkListeningNotification(h, m) {
+    let target = null;
+    let period = null;
+
+    // Exactly 1 minute before 17:10 is 17:09
+    if (h === 17 && m === 9) {
+      target = '17:10';
+      period = 'OCHTEND';
+    }
+    // Exactly 1 minute before 10:10 is 10:09
+    else if (h === 10 && m === 9) {
+      target = '10:10';
+      period = 'MIDDAG';
+    }
+
+    if (!target) return;
+
+    const minuteKey = `${new Date().toISOString().split('T')[0]}_${target}`;
+    if (this.lastListeningNotificationMinute === minuteKey) return;
+    this.lastListeningNotificationMinute = minuteKey;
+
+    const poller = db.getPrimaryPollerUser();
+    const event = {
+      type: 'listening_started',
+      target,
+      period,
+      channel: poller.channelName || '#nl-dist-runners-hlm',
+      title: '⚡ Vrijcheck Luistermodus Gestart',
+      message: `De API is 1m van tevoren begonnen met luisteren naar het Slack bericht in ${poller.channelName || '#nl-dist-runners-hlm'} (${target}).`,
+      timestamp: new Date().toISOString()
+    };
+
+    this.log('info', `📢 1 minuut voor ${target}: Luister-engine geactiveerd voor ${period}-shifts! Melding uitgezonden.`);
+    if (this.io) {
+      this.io.emit('bot:listening_started', event);
+    }
   }
 
   startPolling() {
@@ -640,8 +682,25 @@ export class SlackBotManager {
         db.addHistoryItem(uId, historyRecord);
 
         if (this.io) {
+          const completedNotification = {
+            type: 'vrijcheck_completed',
+            userId: uId,
+            username: uName,
+            block: blockId,
+            emoji: emojiName,
+            period: parsed.period,
+            reactionSuccess,
+            title: reactionSuccess ? '✅ Vrijcheck Voltooid!' : '⚠️ Vrijcheck Mislukt',
+            message: reactionSuccess
+              ? `Vrijcheck gelukt met :${emojiName}:! Kijk nu op Slack om je shift te controleren.`
+              : `Vrijcheck niet gelukt (${errorDetail || 'onbekende fout'}). Kijk op Slack.`,
+            timestamp: new Date().toISOString()
+          };
+
           this.io.to(`user:${uId}`).emit('shifts:updated', userShifts);
           this.io.to(`user:${uId}`).emit('bot:reaction_event', historyRecord);
+          this.io.to(`user:${uId}`).emit('bot:vrijcheck_completed', completedNotification);
+          this.io.emit('bot:vrijcheck_completed', completedNotification);
           this.io.to(`user:${uId}`).emit('history:updated', db.getHistory(uId));
         }
 
@@ -702,6 +761,20 @@ export class SlackBotManager {
     }, 'POST', user);
 
     if (res.ok || res.error === 'already_reacted') {
+      const completedNotification = {
+        type: 'vrijcheck_completed',
+        userId: user.userId,
+        username: user.username,
+        emoji: cleanEmoji,
+        reactionSuccess: true,
+        title: '✅ Vrijcheck Voltooid!',
+        message: `Vrijcheck gelukt met :${cleanEmoji}:! Kijk nu op Slack om je shift te controleren.`,
+        timestamp: new Date().toISOString()
+      };
+      if (this.io) {
+        this.io.emit('bot:vrijcheck_completed', completedNotification);
+      }
+
       return {
         ok: true,
         emoji: cleanEmoji,
@@ -711,5 +784,42 @@ export class SlackBotManager {
     }
 
     throw new Error(res.error || 'Slack reactie mislukt');
+  }
+
+  triggerNotificationTest(type = 'listening_started', userId = null) {
+    const user = db.getUser(userId) || db.getPrimaryPollerUser();
+    const poller = db.getPrimaryPollerUser();
+    const channel = user.channelName || poller.channelName || '#nl-dist-runners-hlm';
+
+    if (type === 'listening_started') {
+      const event = {
+        type: 'listening_started',
+        target: '17:10',
+        period: 'OCHTEND',
+        channel,
+        title: '⚡ Vrijcheck Luistermodus Gestart',
+        message: `De API is 1m van tevoren begonnen met luisteren naar het Slack bericht in ${channel} (17:10).`,
+        timestamp: new Date().toISOString()
+      };
+      if (this.io) {
+        this.io.emit('bot:listening_started', event);
+      }
+      return event;
+    } else {
+      const event = {
+        type: 'vrijcheck_completed',
+        userId: user.userId,
+        username: user.username,
+        emoji: '1-red',
+        reactionSuccess: true,
+        title: '✅ Vrijcheck Voltooid!',
+        message: 'Vrijcheck voltooid met :1-red:! Kijk nu op Slack om je shift te controleren.',
+        timestamp: new Date().toISOString()
+      };
+      if (this.io) {
+        this.io.emit('bot:vrijcheck_completed', event);
+      }
+      return event;
+    }
   }
 }

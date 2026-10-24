@@ -238,6 +238,16 @@ app.post('/api/bot/test-reaction', async (req, res) => {
   }
 });
 
+app.post('/api/bot/test-notification', (req, res) => {
+  const { type = 'listening_started' } = req.body || {};
+  try {
+    const event = botManager.triggerNotificationTest(type, req.userId);
+    res.json({ ok: true, event });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // 4. Reaction History (Per Runner)
 app.get('/api/history', (req, res) => {
   res.json(db.getHistory(req.userId));

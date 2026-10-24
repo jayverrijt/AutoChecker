@@ -10,6 +10,11 @@
   "plugins": {
     "CapacitorHttp": {
       "enabled": true
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_launcher",
+      "iconColor": "#3171f7",
+      "presentationOptions": ["badge", "sound", "banner", "list"]
     }
   }
 }
