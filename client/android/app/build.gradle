@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "nl.picnic.vrijcheck"
+    namespace = "nl.jayverrijt.vrijcheckapp"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "nl.picnic.vrijcheck"
+        applicationId "nl.jayverrijt.vrijcheckapp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

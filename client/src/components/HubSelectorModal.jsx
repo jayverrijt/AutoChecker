@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 
 export const PICNIC_HUBS = [
-  { code: 'HLM', name: 'Haarlem', channel: '#nl-dist-runners-hlm' },
+  { code: 'HLM', name: 'Helmond', channel: '#nl-dist-runners-hlm' },
   { code: 'AMS', name: 'Amsterdam', channel: '#nl-dist-runners-ams' },
   { code: 'UTR', name: 'Utrecht', channel: '#nl-dist-runners-utr' },
   { code: 'RTM', name: 'Rotterdam', channel: '#nl-dist-runners-rtm' },

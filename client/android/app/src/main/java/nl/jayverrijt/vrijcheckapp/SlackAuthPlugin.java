@@ -1,4 +1,4 @@
-package nl.picnic.vrijcheck;
+package nl.jayverrijt.vrijcheckapp;
 
 import android.app.Dialog;
 import android.content.Context;

@@ -1,5 +1,5 @@
 {
-  "appId": "nl.picnic.vrijcheck",
+  "appId": "nl.jayverrijt.vrijcheckapp",
   "appName": "Teamwork Vrijcheck",
   "webDir": "dist",
   "bundledWebRuntime": false,
