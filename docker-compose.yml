@@ -1,0 +1,56 @@
+services:
+  vrijcheck-db:
+    image: mysql:8.0
+    container_name: vrijcheck-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: vrijcheck
+    volumes:
+      - vrijcheck_mysql_data:/var/lib/mysql
+    networks:
+      - vrijcheck-internal
+
+  vrijcheck-phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: vrijcheck-phpmyadmin
+    restart: unless-stopped
+    depends_on:
+      - vrijcheck-db
+    environment:
+      PMA_HOST: vrijcheck-db
+      PMA_PORT: 3306
+    ports:
+      - "8070:80"
+    networks:
+      - vrijcheck-internal
+
+  vrijcheck-24-7:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: vrijcheck-24-7
+    restart: unless-stopped
+    depends_on:
+      - vrijcheck-db
+    environment:
+      - NODE_ENV=production
+      - TZ=Europe/Amsterdam
+      - PORT=3001
+      - DB_HOST=vrijcheck-db
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=root
+      - DB_NAME=vrijcheck
+      - SERVER_API_KEY=${SERVER_API_KEY:-vc_prod_1464e0be3d28f34112b6a5bfe545eb04}
+    ports:
+      - "3001:3001"
+    networks:
+      - vrijcheck-internal
+
+volumes:
+  vrijcheck_mysql_data:
+
+networks:
+  vrijcheck-internal:
+    driver: bridge

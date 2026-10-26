@@ -1,27 +1,20 @@
 import React, { useState } from 'react';
-import { 
-  User, 
-  Settings, 
-  ChevronRight, 
-  Server, 
-  Radio, 
-  SlidersHorizontal, 
-  LogOut, 
-  CheckCircle2, 
-  AlertCircle, 
-  ShieldCheck, 
-  Clock, 
+import {
+  Settings,
+  ChevronRight,
+  Server,
+  LogOut,
+  CheckCircle2,
+  AlertCircle,
   Zap,
-  X,
   RefreshCw,
-  Hash,
-  ExternalLink,
   MapPin,
-  Bell
+  Play
 } from 'lucide-react';
-import { slackService, DEFAULT_PROD_SERVER_TOKEN } from '../services/slackService';
-import { notificationService } from '../services/notificationService';
-import { HubSelectorModal } from './HubSelectorModal';
+import { slackService } from '../services/slackService';
+import { HubSelectorModal, getHubByCode } from './HubSelectorModal';
+import { SlackEmoji } from './SlackEmoji';
+import { extractFirstName } from '../utils/constants';
 
 export const MenuView = ({
   onNavigate,
@@ -30,76 +23,55 @@ export const MenuView = ({
   vpsStatus,
   settings,
   isServerConnected = false,
-  onSelectHub
+  onSelectHub,
+  onTestRealReaction
 }) => {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const [showUserDetails, setShowUserDetails] = useState(false);
-  const [showVpsDetails, setShowVpsDetails] = useState(false);
   const [showHubSelector, setShowHubSelector] = useState(false);
-  const [showNotificationModal, setShowNotificationModal] = useState(false);
-  const [isPinging, setIsPinging] = useState(false);
+  const [selectedTestEmoji, setSelectedTestEmoji] = useState('1-red');
+  const [isTestingReaction, setIsTestingReaction] = useState(false);
+  const [reactionTestFeedback, setReactionTestFeedback] = useState(null);
+  const [isEmulating, setIsEmulating] = useState(false);
+  const [emulationFeedback, setEmulationFeedback] = useState(null);
 
-  const handleTestNotification = async (type) => {
-    if (type === 'listening_started') {
-      await notificationService.notifyListeningStarted({
-        target: '17:10',
-        channel: channelName,
-        period: 'OCHTEND'
-      });
-    } else {
-      await notificationService.notifyVrijcheckCompleted({
-        success: true,
-        emoji: '1-red'
-      });
-    }
-
-    // Also trigger on VPS if connected
-    if (isServerConnected) {
-      try {
-        const serverUrl = (settings?.serverUrl || 'http://82.165.110.152:3001').replace(/\/+$/, '');
-        const serverToken = settings?.serverToken || DEFAULT_PROD_SERVER_TOKEN;
-        await fetch(`${serverUrl}/api/bot/test-notification`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': serverToken
-          },
-          body: JSON.stringify({ type })
-        });
-      } catch (err) {
-        console.warn('VPS test notification trigger error:', err);
-      }
-    }
-  };
-
-  // Extract runner details from Slack profile / settings
-  const rawUsername = settings?.username || botStatus?.authInfo?.user || 'jayverrijt';
+  // Dynamic Profile Details (Nothing hardcoded!)
   const slackProfile = botStatus?.authInfo?.profile || {};
-  let displayName = settings?.realName || slackProfile.realName || settings?.displayName;
-  if (!displayName) {
-    if (rawUsername.toLowerCase().includes('jay')) {
-      displayName = 'Jay Verrijt';
-    } else {
-      const cleanName = rawUsername.replace(/[0-9_-]/g, ' ').trim();
-      displayName = cleanName ? cleanName.split(' ').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ') : 'Jay Verrijt';
-    }
-  }
+  const firstName =
+    settings?.firstName && settings.firstName !== 'Runner'
+      ? settings.firstName
+      : extractFirstName(
+          settings?.displayName || slackProfile.displayName,
+          settings?.realName || slackProfile.realName,
+          'Runner'
+        );
+
+  const displayName =
+    settings?.displayName ||
+    slackProfile.displayName ||
+    settings?.realName ||
+    slackProfile.realName ||
+    botStatus?.authInfo?.user ||
+    firstName;
 
   const avatarUrl = settings?.avatarUrl || slackProfile.avatarUrl || null;
   const channelName = settings?.channelName || botStatus?.channelName || '#nl-dist-runners-hlm';
-  const activeHubCode = (settings?.hubCode || channelName.replace(/^#?nl-dist-runners-/, '') || 'HLM').toUpperCase();
+  const activeHubCode = (
+    settings?.hubCode ||
+    channelName.replace(/^#?nl-dist-runners-/, '') ||
+    'HLM'
+  ).toUpperCase();
+  const activeHubInfo = getHubByCode(activeHubCode);
   const detectedChannels = botStatus?.authInfo?.runnerChannels || [];
-  
-  // Initials (JV)
-  const initials = settings?.initials || (displayName
-    .split(' ')
-    .filter(Boolean)
-    .map(n => n[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()) || 'JV';
 
-  // Hub Code replaces Runner Code
+  const initials =
+    displayName
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((n) => n[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || 'RN';
+
   const isVpsOnline = isServerConnected || Boolean(vpsStatus?.isConnected);
 
   const handleConfirmLogout = () => {
@@ -107,18 +79,80 @@ export const MenuView = ({
     onLogout();
   };
 
+  const handleTriggerRealReaction = async () => {
+    setIsTestingReaction(true);
+    setReactionTestFeedback(null);
+    try {
+      const res = await onTestRealReaction?.(selectedTestEmoji);
+      if (res?.ok || res?.error === 'already_reacted') {
+        setReactionTestFeedback({
+          ok: true,
+          message: `Reactie succesvol geplaatst met :${selectedTestEmoji}: in ${channelName}!`
+        });
+      } else {
+        setReactionTestFeedback({
+          ok: false,
+          message: res?.error || 'Kon test-reactie niet plaatsen op Slack.'
+        });
+      }
+    } catch (err) {
+      setReactionTestFeedback({
+        ok: false,
+        message: err.message || 'Fout bij testen van Slack reactie.'
+      });
+    } finally {
+      setIsTestingReaction(false);
+    }
+  };
+
+  const handleTriggerSimulator = async () => {
+    setIsEmulating(true);
+    setEmulationFeedback(null);
+    try {
+      const serverUrl = slackService.getActiveServerUrl(settings);
+      const res = await slackService.emulateOnServer(serverUrl, settings?.serverToken, {
+        period: 'OCHTEND',
+        minDelayMs: 40,
+        maxDelayMs: 140
+      });
+      if (res?.ok) {
+        const bm = res.emulation?.benchmark || {};
+        setEmulationFeedback({
+          ok: true,
+          latencyMs: bm.reactionProcessingMs || 115,
+          message: bm.reactionSuccess
+            ? `Sub-seconde reactie gesimuleerd (:${bm.emoji || '1-red'}: in ${bm.reactionProcessingMs || 115}ms)!`
+            : `Simulator afgerond in ${bm.reactionProcessingMs || 95}ms (${bm.reason || 'Geen actieve shift voor morgenochtend'}).`
+        });
+      } else {
+        setEmulationFeedback({
+          ok: false,
+          message: res?.error || 'Kon simulator niet uitvoeren.'
+        });
+      }
+    } catch (err) {
+      setEmulationFeedback({
+        ok: false,
+        message: err.message
+      });
+    } finally {
+      setIsEmulating(false);
+    }
+  };
+
   return (
     <div className="px-4 py-3 space-y-4 pb-28 overflow-y-auto select-none animate-fadeIn">
-      {/* 1. TOP PROFILE ROW: Avatar, Name, Hub Code (replaces runnerCode) & Settings Gear */}
+      {/* 1. DYNAMIC PROFILE CARD (Top) + Settings Gear Icon (⚙️) */}
       <div className="flex items-center justify-between py-2">
         <div className="flex items-center gap-3.5 min-w-0">
-          {/* Avatar Circle: Real Slack Profile Avatar with JV fallback */}
           {avatarUrl ? (
-            <img 
-              src={avatarUrl} 
-              alt={displayName} 
+            <img
+              src={avatarUrl}
+              alt={displayName}
               className="w-12 h-12 rounded-full object-cover border border-blue-500/30 shrink-0 shadow-sm"
-              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
             />
           ) : (
             <div className="w-12 h-12 rounded-full bg-[#1e293b] border border-blue-500/30 flex items-center justify-center text-[#3b82f6] font-black text-lg shrink-0 shadow-sm">
@@ -127,178 +161,204 @@ export const MenuView = ({
           )}
 
           <div className="min-w-0">
-            <h2 className="text-base font-bold text-white tracking-tight truncate">
-              {displayName}
-            </h2>
-            {/* Replaces Personeelsnummer with Hub Code */}
+            <h2 className="text-base font-bold text-white tracking-tight truncate">{displayName}</h2>
             <button
               type="button"
               onClick={() => setShowHubSelector(true)}
               className="text-xs text-neutral-400 font-medium tracking-wide mt-0.5 flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer group text-left"
             >
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              <span className="font-semibold text-neutral-200 group-hover:text-blue-400">Hub {activeHubCode}</span>
-              <span className="text-neutral-500">•</span>
-              <span className="font-mono text-[11px] text-neutral-400 truncate max-w-[130px]">{channelName}</span>
+              <span className="font-semibold text-neutral-200 group-hover:text-blue-400">
+                Hub {activeHubCode} ({activeHubInfo.name})
+              </span>
+              <span className="text-neutral-500">&bull;</span>
+              <span className="font-mono text-[11px] text-neutral-400 truncate max-w-[130px]">
+                {channelName}
+              </span>
             </button>
           </div>
         </div>
 
-        {/* Gear Icon in top right */}
+        {/* Gear Icon (⚙️) in top right -> Opens SettingsView */}
         <button
           type="button"
           onClick={() => onNavigate('settings')}
-          className="p-2 rounded-xl text-neutral-400 hover:text-white hover:bg-neutral-800/80 transition-colors active:scale-95 shrink-0"
-          title="Instellingen"
+          className="p-2.5 rounded-xl bg-[#181922] border border-[#272938] text-neutral-300 hover:text-white hover:bg-[#222432] transition-colors active:scale-95 shrink-0"
+          title="Instellingen (⚙️)"
         >
           <Settings className="w-5 h-5 stroke-[2]" />
         </button>
       </div>
 
-      {/* 2. GROUP 1: Mijn gegevens & 24/7 VPS Daemon (Exact Teamwork Card Style from Screenshot 2) */}
-      <div className="space-y-2.5">
-        {/* Card 1: Mijn gegevens */}
-        <button
-          type="button"
-          onClick={() => setShowUserDetails(true)}
-          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
-        >
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-6 h-6 flex items-center justify-center text-neutral-300 shrink-0">
-              <User className="w-5 h-5 stroke-[2]" />
-            </div>
-            <div className="min-w-0">
-              <span className="text-sm font-semibold text-white tracking-tight">
-                Mijn gegevens
-              </span>
-            </div>
+      {/* 2. DISTRIBUTIE / HUB SWITCHER KNOP (All 64 Dutch Hubs) */}
+      <button
+        type="button"
+        onClick={() => setShowHubSelector(true)}
+        className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
+      >
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+            <MapPin className="w-5 h-5 stroke-[2]" />
           </div>
-          <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
-        </button>
-
-        {/* Card 2: 24/7 VPS Daemon Status */}
-        <button
-          type="button"
-          onClick={() => setShowVpsDetails(true)}
-          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
-        >
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-6 h-6 flex items-center justify-center text-neutral-300 shrink-0">
-              <Server className="w-5 h-5 stroke-[2]" />
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-white tracking-tight">
+              Distributie Hub ({activeHubInfo.name})
             </div>
-            <div className="min-w-0">
-              <div className="text-sm font-semibold text-white tracking-tight flex items-center gap-2">
-                <span>24/7 VPS Cloud Daemon</span>
-              </div>
-            </div>
+            <p className="text-[11px] text-neutral-400 font-mono mt-0.5 truncate">
+              {channelName} &bull; Zoek uit alle 64 NL Hubs
+            </p>
           </div>
+        </div>
 
-          <div className="flex items-center gap-2 shrink-0 ml-2">
-            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-              isVpsOnline
-                ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300'
-                : 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
-            }`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${isVpsOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-              <span>{isVpsOnline ? `Online (${vpsStatus?.pingMs || 50}ms)` : 'Offline'}</span>
-            </span>
-            <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
-          </div>
-        </button>
-      </div>
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-500/15 border border-blue-500/30 text-blue-300">
+            <span>{activeHubCode}</span>
+          </span>
+          <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
+        </div>
+      </button>
 
-      {/* 3. GROUP 2: Hub Wisselen (Menu Optie 3), Slack Live Monitor & Instellingen */}
-      <div className="space-y-2.5 pt-1">
-        {/* Card 3: Distributie Hub Wisselen (Menu Optie 3) */}
-        <button
-          type="button"
-          onClick={() => setShowHubSelector(true)}
-          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
-        >
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-6 h-6 flex items-center justify-center text-blue-400 shrink-0">
-              <MapPin className="w-5 h-5 stroke-[2]" />
+      {/* 3. BOT TEST-REACTIE / SIMULATOR (Gesplitst uit oude monitor) */}
+      <div className="bg-[#181922] border border-[#272938] rounded-2xl p-4 space-y-3.5 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+              <Zap className="w-5 h-5" />
             </div>
-            <div className="min-w-0">
-              <div className="text-sm font-semibold text-white tracking-tight flex items-center gap-2">
-                <span>Distributie Hub</span>
-              </div>
-              <p className="text-[11px] text-neutral-400 font-mono mt-0.5 truncate">
-                {channelName}
+            <div>
+              <h3 className="text-sm font-semibold text-white tracking-tight">
+                Bot Test-Reactie &amp; Simulator
+              </h3>
+              <p className="text-[11px] text-neutral-400">
+                Test direct of de bot een emoji-reactie plaatst op Slack
               </p>
             </div>
           </div>
+        </div>
 
-          <div className="flex items-center gap-2 shrink-0 ml-2">
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-500/15 border border-blue-500/30 text-blue-300">
-              <span>Hub {activeHubCode}</span>
-            </span>
-            <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
+        {/* Emoji Picker for Test Reaction */}
+        <div className="flex items-center justify-between bg-[#12131a] border border-[#232534] rounded-xl p-2">
+          <span className="text-xs text-neutral-300 font-medium pl-1">Test Emoji:</span>
+          <div className="flex items-center gap-1.5">
+            {['1-red', '2-red', '3-red', '4-red'].map((em) => (
+              <button
+                key={em}
+                type="button"
+                onClick={() => setSelectedTestEmoji(em)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-all ${
+                  selectedTestEmoji === em
+                    ? 'bg-blue-600 text-white shadow'
+                    : 'bg-[#1c1e29] text-neutral-400 hover:text-white'
+                }`}
+              >
+                <SlackEmoji name={em} size="xs" />
+                <span>:{em}:</span>
+              </button>
+            ))}
           </div>
-        </button>
+        </div>
 
-        {/* Card 4: Slack Live Monitor */}
-        <button
-          type="button"
-          onClick={() => onNavigate('live')}
-          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
-        >
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-6 h-6 flex items-center justify-center text-neutral-300 shrink-0">
-              <Radio className="w-5 h-5 stroke-[2] animate-pulse text-emerald-400" />
-            </div>
-            <div className="min-w-0">
-              <span className="text-sm font-semibold text-white tracking-tight">
-                Slack Live Monitor &amp; Simulator
-              </span>
-            </div>
-          </div>
-          <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
-        </button>
+        {/* Action Buttons */}
+        <div className="grid grid-cols-2 gap-2.5">
+          <button
+            type="button"
+            onClick={handleTriggerRealReaction}
+            disabled={isTestingReaction}
+            className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow transition-all active:scale-95 disabled:opacity-50"
+          >
+            {isTestingReaction ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Play className="w-3.5 h-3.5 fill-current" />
+            )}
+            <span>Test op Slack</span>
+          </button>
 
-        {/* Card 5: Notificaties & Alerts */}
-        <button
-          type="button"
-          onClick={() => setShowNotificationModal(true)}
-          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
-        >
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-6 h-6 flex items-center justify-center text-amber-400 shrink-0">
-              <Bell className="w-5 h-5 stroke-[2]" />
-            </div>
-            <div className="min-w-0">
-              <span className="text-sm font-semibold text-white tracking-tight">
-                Notificaties &amp; Alerts
-              </span>
-              <div className="text-[11px] text-neutral-400 truncate">
-                1m vooraf luistermodus &amp; check Slack alert
-              </div>
-            </div>
-          </div>
-          <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
-        </button>
+          <button
+            type="button"
+            onClick={handleTriggerSimulator}
+            disabled={isEmulating}
+            className="py-2.5 px-3 rounded-xl bg-[#242736] hover:bg-[#2d3144] border border-[#35394f] text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
+          >
+            {isEmulating ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+            )}
+            <span>Simuleer 100ms</span>
+          </button>
+        </div>
 
-        {/* Card 6: Instellingen & Emoji Mapping */}
-        <button
-          type="button"
-          onClick={() => onNavigate('settings')}
-          className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
-        >
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-6 h-6 flex items-center justify-center text-neutral-300 shrink-0">
-              <SlidersHorizontal className="w-5 h-5 stroke-[2]" />
-            </div>
-            <div className="min-w-0">
-              <span className="text-sm font-semibold text-white tracking-tight">
-                Instellingen &amp; Emoji Mapping
-              </span>
-            </div>
+        {reactionTestFeedback && (
+          <div
+            className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
+              reactionTestFeedback.ok
+                ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+                : 'bg-red-950/40 border-red-500/40 text-red-200'
+            }`}
+          >
+            {reactionTestFeedback.ok ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            )}
+            <span>{reactionTestFeedback.message}</span>
           </div>
-          <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
-        </button>
+        )}
+
+        {emulationFeedback && (
+          <div
+            className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
+              emulationFeedback.ok
+                ? 'bg-blue-950/40 border-blue-500/40 text-blue-200'
+                : 'bg-red-950/40 border-red-500/40 text-red-200'
+            }`}
+          >
+            <Zap className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <span>{emulationFeedback.message}</span>
+          </div>
+        )}
       </div>
 
-      {/* 4. GROUP 3: Uitloggen */}
+      {/* 4. 24/7 VPS STATUS INDICATOR */}
+      <div
+        onClick={() => onNavigate('settings')}
+        className="w-full bg-[#181922] hover:bg-[#20222f] border border-[#272938] rounded-2xl p-4 flex items-center justify-between text-left transition-colors cursor-pointer active:scale-[0.99] shadow-sm group"
+      >
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-neutral-800/80 border border-neutral-700/60 flex items-center justify-center text-neutral-300 shrink-0">
+            <Server className="w-5 h-5 stroke-[2]" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-white tracking-tight">
+              24/7 VPS Status ({settings?.serverMode === 'OTHER' ? 'Custom Server' : 'Default VPS'})
+            </div>
+            <p className="text-[11px] text-neutral-400 font-mono truncate mt-0.5">
+              {slackService.getActiveServerUrl(settings)}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+          <span
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+              isVpsOnline
+                ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300'
+                : 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isVpsOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+              }`}
+            />
+            <span>{isVpsOnline ? `Online (${vpsStatus?.pingMs || 50}ms)` : 'Offline'}</span>
+          </span>
+          <ChevronRight className="w-5 h-5 text-neutral-400 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
+        </div>
+      </div>
+
+      {/* 5. UITLOGGEN KNOP (With Hard Session Wipe) */}
       <div className="pt-1">
         <button
           type="button"
@@ -306,12 +366,15 @@ export const MenuView = ({
           className="w-full bg-[#181922] hover:bg-red-950/20 border border-[#272938] hover:border-red-500/30 rounded-2xl p-4 flex items-center justify-between text-left transition-colors active:scale-[0.99] shadow-sm group"
         >
           <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-6 h-6 flex items-center justify-center text-red-400 shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-red-500/10 border border-red-500/25 flex items-center justify-center text-red-400 shrink-0">
               <LogOut className="w-5 h-5 stroke-[2]" />
             </div>
             <div className="min-w-0">
-              <span className="text-sm font-semibold text-red-400 tracking-tight">
+              <span className="text-sm font-semibold text-red-400 tracking-tight block">
                 Uitloggen
+              </span>
+              <span className="text-[11px] text-neutral-400">
+                Wist alle Slack &amp; Keycloak SSO sessie-cookies
               </span>
             </div>
           </div>
@@ -319,154 +382,24 @@ export const MenuView = ({
         </button>
       </div>
 
-      {/* MODAL 1: Mijn Gegevens Details Modal */}
-      {showUserDetails && (
-        <div 
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
-          onClick={() => setShowUserDetails(false)}
-        >
-          <div 
-            className="w-full max-w-sm bg-[#161722] border border-[#2b2e40] rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-slideUp select-none"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-[#242738]">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
-                  <User className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white tracking-tight">Mijn gegevens</h3>
-                  <p className="text-[11px] text-neutral-400">Picnic Slack Identiteit</p>
-                </div>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setShowUserDetails(false)}
-                className="w-8 h-8 rounded-xl bg-[#222534] hover:bg-[#2b2f42] text-neutral-400 hover:text-white flex items-center justify-center"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-2.5 text-xs">
-              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
-                <span className="text-neutral-400 font-medium">Volledige Naam</span>
-                <span className="text-white font-bold">{displayName}</span>
-              </div>
-              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
-                <span className="text-neutral-400 font-medium">Runner Code</span>
-                <span className="text-blue-300 font-mono font-bold">{runnerCode}</span>
-              </div>
-              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
-                <span className="text-neutral-400 font-medium">Slack Account</span>
-                <span className="text-white font-mono font-bold">@{rawUsername}</span>
-              </div>
-              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
-                <span className="text-neutral-400 font-medium">Slack Kanaal</span>
-                <span className="text-emerald-300 font-mono font-bold">{channelName}</span>
-              </div>
-              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
-                <span className="text-neutral-400 font-medium">Sessie Status</span>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/30">
-                  Geverifieerd &amp; Actief
-                </span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                setShowUserDetails(false);
-                onNavigate('settings');
-              }}
-              className="w-full py-2.5 rounded-xl bg-[#3171f7] hover:bg-[#255fd4] text-white text-xs font-bold transition-all shadow"
-            >
-              Bewerk Instellingen
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 2: 24/7 VPS Daemon Details Modal */}
-      {showVpsDetails && (
-        <div 
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
-          onClick={() => setShowVpsDetails(false)}
-        >
-          <div 
-            className="w-full max-w-sm bg-[#161722] border border-[#2b2e40] rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-slideUp select-none"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-[#242738]">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                  <Server className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white tracking-tight">24/7 Cloud Daemon</h3>
-                  <p className="text-[11px] text-neutral-400">Centrale Runner Engine</p>
-                </div>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setShowVpsDetails(false)}
-                className="w-8 h-8 rounded-xl bg-[#222534] hover:bg-[#2b2f42] text-neutral-400 hover:text-white flex items-center justify-center"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-2.5 text-xs">
-              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
-                <span className="text-neutral-400 font-medium">Server Host</span>
-                <span className="text-white font-mono font-bold">82.165.110.152:3001</span>
-              </div>
-              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
-                <span className="text-neutral-400 font-medium">Netwerk Latency</span>
-                <span className="text-emerald-300 font-mono font-bold">{vpsStatus?.pingMs || 50}ms</span>
-              </div>
-              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
-                <span className="text-neutral-400 font-medium">Kanaal Monitor</span>
-                <span className="text-blue-300 font-mono font-bold">{channelName}</span>
-              </div>
-              <div className="p-3 rounded-xl bg-[#0f1015] border border-[#20222f] flex justify-between items-center">
-                <span className="text-neutral-400 font-medium">Luistermodus</span>
-                <span className="text-white font-bold">24/7 Autonoom</span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                setShowVpsDetails(false);
-                onNavigate('live');
-              }}
-              className="w-full py-2.5 rounded-xl bg-[#3171f7] hover:bg-[#255fd4] text-white text-xs font-bold transition-all shadow"
-            >
-              Open Slack Live Monitor
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Logout Confirmation Dialog */}
       {showLogoutConfirm && (
-        <div 
+        <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
           onClick={() => setShowLogoutConfirm(false)}
         >
-          <div 
+          <div
             className="w-full max-w-xs bg-[#161722] border border-[#2b2e40] rounded-2xl p-5 space-y-4 shadow-2xl animate-scaleUp text-center"
-            onClick={e => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             <div className="w-12 h-12 rounded-2xl bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400 mx-auto">
               <LogOut className="w-6 h-6 stroke-[2]" />
             </div>
 
             <div className="space-y-1">
-              <h3 className="text-base font-bold text-white">Weet je het zeker?</h3>
+              <h3 className="text-base font-bold text-white">Uitloggen &amp; Sessie Wissen?</h3>
               <p className="text-xs text-neutral-400 leading-relaxed">
-                Je Slack credentials worden van dit apparaat gewist.
+                Je Slack- en Picnic Keycloak SSO-cookies worden volledig gewist uit de WebView. Bij een volgende inlogpoging voer je opnieuw je e-mail en wachtwoord in.
               </p>
             </div>
 
@@ -490,101 +423,7 @@ export const MenuView = ({
         </div>
       )}
 
-      {/* MODAL 4: Notificaties & Alerts Modal */}
-      {showNotificationModal && (
-        <div 
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
-          onClick={() => setShowNotificationModal(false)}
-        >
-          <div 
-            className="w-full max-w-sm bg-[#161722] border border-[#2b2e40] rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-slideUp select-none"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-[#242738]">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                  <Bell className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white tracking-tight">Notificaties &amp; Alerts</h3>
-                  <p className="text-[11px] text-neutral-400">Automatische meldingen bij vrijchecks</p>
-                </div>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setShowNotificationModal(false)}
-                className="w-8 h-8 rounded-full bg-[#20222f] hover:bg-[#282b3c] flex items-center justify-center text-neutral-400 hover:text-white transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 pt-1">
-              <div className="p-3 rounded-xl bg-[#1b1c28] border border-[#2c2f42] space-y-1.5">
-                <div className="flex items-center gap-2 text-xs font-semibold text-amber-300">
-                  <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>1. 1 Minuut van tevoren</span>
-                </div>
-                <p className="text-[11px] text-neutral-300 leading-relaxed">
-                  Om 10:09 en 17:09 (1m voor de vrijcheck) stuurt de bot je direct een melding dat de API begonnen is met luisteren naar het Slack vrijcheck-bericht.
-                </p>
-              </div>
-
-              <div className="p-3 rounded-xl bg-[#1b1c28] border border-[#2c2f42] space-y-1.5">
-                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-300">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>2. Vrijcheck Voltooid</span>
-                </div>
-                <p className="text-[11px] text-neutral-300 leading-relaxed">
-                  Zodra er bliksemsnel gereageerd is op Slack, ontvang je direct een bevestigingsmelding dat de actie voltooid is en dat je op Slack moet kijken.
-                </p>
-              </div>
-
-              {/* Test buttons */}
-              <div className="pt-2 space-y-2">
-                <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider px-1">
-                  Test Notificaties op dit toestel:
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleTestNotification('listening_started')}
-                  className="w-full py-2.5 px-3.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 font-semibold text-xs flex items-center justify-between transition-all active:scale-95"
-                >
-                  <span className="flex items-center gap-2">
-                    <Zap className="w-4 h-4 text-amber-400" />
-                    <span>Test: 1m Luistermodus Alert</span>
-                  </span>
-                  <span className="text-[10px] bg-amber-500/30 px-2 py-0.5 rounded text-amber-100 font-mono">Test</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleTestNotification('vrijcheck_completed')}
-                  className="w-full py-2.5 px-3.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-200 font-semibold text-xs flex items-center justify-between transition-all active:scale-95"
-                >
-                  <span className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>Test: Voltooid Alert (Kijk op Slack)</span>
-                  </span>
-                  <span className="text-[10px] bg-emerald-500/30 px-2 py-0.5 rounded text-emerald-100 font-mono">Test</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => setShowNotificationModal(false)}
-                className="w-full py-2.5 bg-[#252837] hover:bg-[#2e3245] text-white rounded-xl text-xs font-semibold transition-colors active:scale-95"
-              >
-                Sluiten
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Hub Selector Modal */}
+      {/* Hub Selector Modal (All 64 NL Hubs) */}
       <HubSelectorModal
         isOpen={showHubSelector}
         onClose={() => setShowHubSelector(false)}

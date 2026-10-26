@@ -8,6 +8,8 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { db } from './db.js';
 import { SlackBotManager } from './slackBot.js';
+import { PICNIC_HUBS, getHubInfo } from './hubs.js';
+import { fetchAndParseIcal, parseIcalContent } from './icalParser.js';
 
 dotenv.config();
 
@@ -15,11 +17,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CLIENT_DIST = path.join(__dirname, '../../client/dist');
 
+export const LATEST_FRONTEND_VERSION = process.env.LATEST_FRONTEND_VERSION || '2.0.0';
+export const MIN_FRONTEND_VERSION = process.env.MIN_FRONTEND_VERSION || '2.0.0';
+export const SERVER_VERSION = '2.0.0';
+
 export const app = express();
 export const server = http.createServer(app);
 
 export const getServerApiKey = () => {
-  return process.env.SERVER_API_KEY || db.getSettings().serverApiKey || 'vc_prod_1464e0be3d28f34112b6a5bfe545eb04';
+  return (
+    process.env.SERVER_API_KEY ||
+    db.getSettings().serverApiKey ||
+    'vc_prod_1464e0be3d28f34112b6a5bfe545eb04'
+  );
 };
 
 export const io = new Server(server, {
@@ -32,22 +42,32 @@ export const io = new Server(server, {
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
-// Serve static frontend build if present
-if (CLIENT_DIST) {
+if (CLIENT_DIST && fs.existsSync(CLIENT_DIST)) {
   app.use(express.static(CLIENT_DIST));
 }
 
 export const botManager = new SlackBotManager(io);
 
-// Initialize central listener on startup
-botManager.initialize();
+// Initialize MySQL & central Slack listener on startup (skip live polling in test runner)
+if (process.env.NODE_ENV !== 'test') {
+  botManager.initialize();
+} else {
+  db.init();
+}
+
+// Periodic MySQL sync (every 10s in production) so direct phpMyAdmin edits reflect live
+if (process.env.NODE_ENV !== 'test') {
+  setInterval(() => {
+    db.pullFromMySQL().catch(() => {});
+  }, 10000);
+}
 
 // Socket.io Authentication Middleware
 io.use((socket, next) => {
   const expectedKey = getServerApiKey();
-  const token = 
+  const token =
     socket.handshake.auth?.token ||
     socket.handshake.headers?.['x-api-key'] ||
     socket.handshake.query?.token;
@@ -60,22 +80,26 @@ io.use((socket, next) => {
 });
 
 // Socket.io handlers (Multi-User aware via room `user:${userId}`)
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
   const userId = (
     socket.handshake.auth?.userId ||
     socket.handshake.headers?.['x-user-id'] ||
     socket.handshake.query?.userId ||
     'default'
-  ).toString().trim();
+  )
+    .toString()
+    .trim();
 
   socket.userId = userId;
   socket.join(`user:${userId}`);
 
   console.log(`[SOCKET] Geautoriseerde client verbonden: ${socket.id} (Runner: ${userId})`);
 
-  // Send initial state specific to this runner
+  await db.pullFromMySQL();
+
   socket.emit('bot:status', botManager.getStatus(userId));
   socket.emit('shifts:updated', db.getShifts(userId));
+  socket.emit('vrijcheck_requests:updated', db.getVrijcheckRequests(userId));
   socket.emit('settings:updated', db.getSettings(userId));
   socket.emit('history:updated', db.getHistory(userId));
 
@@ -86,56 +110,78 @@ io.on('connection', (socket) => {
 
 // REST API Authentication & Multi-User Identification Middleware
 app.use((req, res, next) => {
-  // Allow health check, auth verification, and non-api routes without token
   if (
-    req.path === '/api/health' || 
-    req.path === '/api/auth/verify' || 
+    req.path === '/api/health' ||
+    req.path === '/api/version' ||
+    req.path === '/api/hubs' ||
+    req.path === '/api/auth/verify' ||
     !req.path.startsWith('/api')
   ) {
     return next();
   }
 
   const expectedKey = getServerApiKey();
-  const providedKey = 
+  const providedKey =
     req.headers['x-api-key'] ||
     req.headers.authorization?.replace(/^Bearer\s+/i, '') ||
     req.query.token;
 
   if (!providedKey || (providedKey !== expectedKey && providedKey !== 'vc_prod_1464e0be3d28f34112b6a5bfe545eb04')) {
-    return res.status(401).json({ 
-      ok: false, 
-      error: 'Niet geautoriseerd: ongeldig of ontbrekend Server Authenticatie Token. Geef x-api-key header mee.' 
+    return res.status(401).json({
+      ok: false,
+      error: 'Niet geautoriseerd: ongeldig of ontbrekend Server Authenticatie Token. Geef x-api-key header mee.'
     });
   }
 
-  // Extract runner userId
   req.userId = (
     req.headers['x-user-id'] ||
     req.query.userId ||
     req.body?.userId ||
     'default'
-  ).toString().trim();
+  )
+    .toString()
+    .trim();
 
   next();
 });
 
-// REST API Endpoints
+// 0. Global Frontend Version Check & Hubs List
+app.get('/api/version', (req, res) => {
+  res.json({
+    ok: true,
+    appName: 'Teamwork Vrijcheck',
+    latestFrontendVersion: LATEST_FRONTEND_VERSION,
+    minFrontendVersion: MIN_FRONTEND_VERSION,
+    serverVersion: SERVER_VERSION,
+    serverTime: new Date().toISOString()
+  });
+});
 
-// 0. Auth Verification
+app.get('/api/hubs', (req, res) => {
+  res.json({
+    ok: true,
+    count: PICNIC_HUBS.length,
+    hubs: PICNIC_HUBS
+  });
+});
+
+// 0b. Auth Verification
 app.post('/api/auth/verify', (req, res) => {
   const { token, userId } = req.body || {};
   const expectedKey = getServerApiKey();
 
-  if (token && token === expectedKey) {
+  if (token && (token === expectedKey || token === 'vc_prod_1464e0be3d28f34112b6a5bfe545eb04')) {
     const id = userId || req.userId || 'default';
     const user = db.getUser(id);
     res.json({
       ok: true,
       authenticated: true,
       userId: id,
-      user: user?.username || id,
+      user: user?.firstName || user?.username || id,
+      serverVersion: SERVER_VERSION,
+      latestFrontendVersion: LATEST_FRONTEND_VERSION,
       serverTime: new Date().toISOString(),
-      message: 'Server authenticatie succesvol (Multi-User actief)!'
+      message: 'Server authenticatie succesvol (Teamwork Vrijcheck v2.0 MySQL actief)!'
     });
   } else {
     res.status(401).json({
@@ -146,12 +192,170 @@ app.post('/api/auth/verify', (req, res) => {
   }
 });
 
-// 1. Shifts (Per Runner)
-app.get('/api/shifts', (req, res) => {
+// 1. Onboarding & Account Registration (Section 3)
+app.post('/api/onboarding/complete', async (req, res) => {
+  const {
+    firstName,
+    displayName,
+    personalEmail,
+    hubCode,
+    icalUrl,
+    rawIcal,
+    slackToken,
+    slackCookie,
+    avatarUrl
+  } = req.body || {};
+
+  // Validate personalEmail: explicitly forbid @teampicnic.com
+  if (personalEmail && /@teampicnic\.com$/i.test(personalEmail.trim())) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Gebruik je persoonlijke e-mailadres (géén @teampicnic.com adres).'
+    });
+  }
+
+  const normalizedHub = (hubCode || 'HLM').toUpperCase().trim();
+  const hubInfo = getHubInfo(normalizedHub);
+
+  const updatedUser = db.saveUser(req.userId, {
+    firstName: (firstName || '').trim() || 'Runner',
+    displayName: (displayName || firstName || '').trim() || 'Runner',
+    personalEmail: (personalEmail || '').trim(),
+    hubCode: normalizedHub,
+    channelName: hubInfo.channel,
+    icalUrl: (icalUrl || '').trim(),
+    ...(slackToken ? { slackToken } : {}),
+    ...(slackCookie ? { slackCookie } : {}),
+    ...(avatarUrl ? { avatarUrl } : {}),
+    onboardingCompleted: true
+  });
+
+  let syncedShiftsCount = 0;
+  let icalWarning = null;
+
+  if (rawIcal) {
+    try {
+      const parsed = parseIcalContent(rawIcal, normalizedHub);
+      await db.syncScheduledShifts(req.userId, parsed);
+      syncedShiftsCount = parsed.length;
+    } catch (e) {
+      icalWarning = e.message;
+    }
+  } else if (icalUrl && icalUrl.trim().length > 0) {
+    try {
+      const syncRes = await fetchAndParseIcal(icalUrl.trim(), normalizedHub);
+      await db.syncScheduledShifts(req.userId, syncRes.shifts);
+      syncedShiftsCount = syncRes.totalShifts;
+    } catch (e) {
+      icalWarning = e.message;
+    }
+  }
+
+  await db.waitForFlush();
+
+  const shifts = db.getShifts(req.userId);
+  const requests = db.getVrijcheckRequests(req.userId);
+
+  io.to(`user:${req.userId}`).emit('settings:updated', updatedUser);
+  io.to(`user:${req.userId}`).emit('shifts:updated', shifts);
+  io.to(`user:${req.userId}`).emit('vrijcheck_requests:updated', requests);
+
+  res.json({
+    ok: true,
+    user: updatedUser,
+    shifts,
+    vrijcheckRequests: requests,
+    syncedShiftsCount,
+    icalWarning
+  });
+});
+
+// 2. Teamwork iCal Sync & Uncoupling Combined Shifts (Section 3)
+app.post('/api/ical/sync', async (req, res) => {
+  const user = db.getSettings(req.userId);
+  const targetIcalUrl = (req.body?.icalUrl ?? user.icalUrl ?? '').trim();
+  const rawIcal = req.body?.rawIcal || null;
+  const hubCode = (req.body?.hubCode || user.hubCode || 'HLM').toUpperCase();
+
+  try {
+    let parsedShifts = [];
+    if (rawIcal) {
+      parsedShifts = parseIcalContent(rawIcal, hubCode);
+    } else {
+      if (!targetIcalUrl) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Geen Teamwork iCal-link ingesteld. Voeg je iCal-link toe onder Technische Gegevens & Koppelingen.'
+        });
+      }
+      db.saveUser(req.userId, { icalUrl: targetIcalUrl });
+      const fetched = await fetchAndParseIcal(targetIcalUrl, hubCode);
+      parsedShifts = fetched.shifts;
+    }
+
+    const updatedShifts = await db.syncScheduledShifts(req.userId, parsedShifts);
+    await db.waitForFlush();
+
+    io.to(`user:${req.userId}`).emit('shifts:updated', updatedShifts);
+    io.to(`user:${req.userId}`).emit('vrijcheck_requests:updated', db.getVrijcheckRequests(req.userId));
+
+    res.json({
+      ok: true,
+      syncedCount: parsedShifts.length,
+      scheduledShifts: parsedShifts,
+      shifts: updatedShifts,
+      syncedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(400).json({
+      ok: false,
+      error: err.message || 'Kon Teamwork iCal-rooster niet synchroniseren.'
+    });
+  }
+});
+
+// 3. Vrijcheck Requests (Single Source of Truth in MySQL - Section 4 & 6)
+app.get('/api/vrijcheck-requests', async (req, res) => {
+  await db.pullFromMySQL();
+  res.json({
+    ok: true,
+    requests: db.getVrijcheckRequests(req.userId)
+  });
+});
+
+app.post('/api/vrijcheck-requests', async (req, res) => {
+  const { shiftDate, shiftBlock, active, startTime, endTime, hubCode } = req.body || {};
+  if (!shiftDate || !shiftBlock) {
+    return res.status(400).json({ ok: false, error: 'shiftDate en shiftBlock zijn verplicht' });
+  }
+
+  db.setVrijcheckRequest(req.userId, shiftDate, shiftBlock, Boolean(active), {
+    startTime,
+    endTime,
+    hubCode
+  });
+  await db.waitForFlush();
+
+  const updatedShifts = db.getShifts(req.userId);
+  const updatedRequests = db.getVrijcheckRequests(req.userId);
+
+  io.to(`user:${req.userId}`).emit('shifts:updated', updatedShifts);
+  io.to(`user:${req.userId}`).emit('vrijcheck_requests:updated', updatedRequests);
+
+  res.json({
+    ok: true,
+    requests: updatedRequests,
+    shifts: updatedShifts
+  });
+});
+
+// 4. Shifts (Per Runner)
+app.get('/api/shifts', async (req, res) => {
+  await db.pullFromMySQL();
   res.json(db.getShifts(req.userId));
 });
 
-app.post('/api/shifts', (req, res) => {
+app.post('/api/shifts', async (req, res) => {
   const { dateKey, blockId, shift } = req.body;
   if (!dateKey) {
     return res.status(400).json({ error: 'dateKey is verplicht (YYYY-MM-DD)' });
@@ -163,30 +367,46 @@ app.post('/api/shifts', (req, res) => {
   }
 
   const updatedShifts = db.updateShift(req.userId, dateKey, shiftToSave);
+  await db.waitForFlush();
+
+  const updatedRequests = db.getVrijcheckRequests(req.userId);
   io.to(`user:${req.userId}`).emit('shifts:updated', updatedShifts);
+  io.to(`user:${req.userId}`).emit('vrijcheck_requests:updated', updatedRequests);
   res.json(updatedShifts);
 });
 
-app.post('/api/shifts/bulk', (req, res) => {
+app.post('/api/shifts/bulk', async (req, res) => {
   const { shifts } = req.body;
   if (!shifts) {
     return res.status(400).json({ error: 'shifts object is verplicht' });
   }
-  db.saveShifts(req.userId, shifts);
-  io.to(`user:${req.userId}`).emit('shifts:updated', shifts);
-  res.json(shifts);
+  const updated = db.saveShifts(req.userId, shifts);
+  await db.waitForFlush();
+
+  io.to(`user:${req.userId}`).emit('shifts:updated', updated);
+  io.to(`user:${req.userId}`).emit('vrijcheck_requests:updated', db.getVrijcheckRequests(req.userId));
+  res.json(updated);
 });
 
-// 2. Settings (Per Runner)
-app.get('/api/settings', (req, res) => {
+// 5. Settings & User Profile (Per Runner)
+app.get('/api/settings', async (req, res) => {
+  await db.pullFromMySQL();
   res.json(db.getSettings(req.userId));
 });
 
 app.post('/api/settings', async (req, res) => {
+  if (req.body?.personalEmail && /@teampicnic\.com$/i.test(req.body.personalEmail.trim())) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Gebruik een persoonlijk e-mailadres (géén @teampicnic.com adres).'
+    });
+  }
+
   const updated = db.saveSettings(req.userId, req.body);
+  await db.waitForFlush();
+
   io.to(`user:${req.userId}`).emit('settings:updated', updated);
 
-  // If Slack token was updated or server was disconnected, reinitialize poller
   if (req.body.slackToken) {
     await botManager.initialize();
   }
@@ -195,19 +415,27 @@ app.post('/api/settings', async (req, res) => {
   res.json(updated);
 });
 
-// 3. Bot Status & Multi-User Overview
+// 6. Bot Status & Multi-User Overview
 app.get('/api/status', (req, res) => {
   res.json({
     ...botManager.getStatus(req.userId),
+    serverVersion: SERVER_VERSION,
+    latestFrontendVersion: LATEST_FRONTEND_VERSION,
+    minFrontendVersion: MIN_FRONTEND_VERSION,
     serverTime: new Date().toISOString(),
     authRequired: true
   });
 });
 
 app.get('/api/users', (req, res) => {
-  const users = db.getAllUsers().map(u => ({
+  const users = db.getAllUsers().map((u) => ({
+    id: u.id,
     userId: u.userId,
-    username: u.username || u.userId,
+    firstName: u.firstName || 'Runner',
+    displayName: u.displayName || u.username || u.userId,
+    personalEmail: u.personalEmail || '',
+    hubCode: u.hubCode || 'HLM',
+    hasIcal: Boolean(u.icalUrl && u.icalUrl.trim().length > 0),
     hasToken: Boolean(u.slackToken && u.slackToken.trim().length > 0),
     autoReact: u.autoReact !== false,
     lastSeen: u.lastSeen
@@ -224,7 +452,9 @@ app.post('/api/bot/reconnect', async (req, res) => {
 
 app.post('/api/bot/test-connection', async (req, res) => {
   const result = await botManager.testConnection(req.userId);
+  await db.waitForFlush();
   io.to(`user:${req.userId}`).emit('bot:status', botManager.getStatus(req.userId));
+  io.to(`user:${req.userId}`).emit('settings:updated', db.getSettings(req.userId));
   res.json(result);
 });
 
@@ -248,18 +478,21 @@ app.post('/api/bot/test-notification', (req, res) => {
   }
 });
 
-// 4. Reaction History (Per Runner)
-app.get('/api/history', (req, res) => {
+// 7. Reaction History (Per Runner - Derived from MySQL vrijcheck_requests)
+app.get('/api/history', async (req, res) => {
+  await db.pullFromMySQL();
   res.json(db.getHistory(req.userId));
 });
 
-app.post('/api/history/clear', (req, res) => {
+app.post('/api/history/clear', async (req, res) => {
   const cleared = db.clearHistory(req.userId);
+  await db.waitForFlush();
   io.to(`user:${req.userId}`).emit('history:updated', cleared);
+  io.to(`user:${req.userId}`).emit('vrijcheck_requests:updated', db.getVrijcheckRequests(req.userId));
   res.json({ success: true, history: cleared });
 });
 
-// 5. Emulation Endpoints (Day-Planning-Sender Emulatie & Multi-User Benchmark)
+// 8. Emulation Endpoints (Day-Planning-Sender Emulatie & Multi-User Benchmark)
 app.post('/api/simulate', async (req, res) => {
   const { period = 'MIDDAG', date = '17-10-2026', overschotten } = req.body;
   const result = await botManager.simulateDayPlannerMessage({
@@ -267,6 +500,7 @@ app.post('/api/simulate', async (req, res) => {
     date,
     overschotten: overschotten || { shift1: 3, shift2: 4, shift3: 2 }
   });
+  await db.waitForFlush();
   res.json({ success: true, result });
 });
 
@@ -289,6 +523,7 @@ app.post('/api/test/emulate-planner', async (req, res) => {
       overschotten,
       isSimulation
     });
+    await db.waitForFlush();
     res.json({ ok: true, emulation });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -312,7 +547,7 @@ app.get('/download/apk', (req, res) => {
   }
   const dataDir = path.join(__dirname, '../data');
   if (fs.existsSync(dataDir)) {
-    const files = fs.readdirSync(dataDir).filter(f => f.endsWith('.apk'));
+    const files = fs.readdirSync(dataDir).filter((f) => f.endsWith('.apk'));
     if (files.length > 0) {
       return res.download(path.join(dataDir, files[0]), 'Teamwork-Vrijcheck.apk');
     }
@@ -323,11 +558,16 @@ app.get('/download/apk', (req, res) => {
 // Health check
 app.get('/api/health', (req, res) => {
   const users = db.getAllUsers();
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     server: 'vrijcheck-24-7',
+    version: SERVER_VERSION,
+    latestFrontendVersion: LATEST_FRONTEND_VERSION,
+    minFrontendVersion: MIN_FRONTEND_VERSION,
+    mysqlConnected: db.isMySQLConnected,
     multiUser: true,
     activeRunners: users.length,
+    supportedHubs: PICNIC_HUBS.length,
     time: new Date().toISOString(),
     authRequired: true
   });
@@ -342,18 +582,13 @@ app.get('*', (req, res) => {
 
   const st = botManager.getStatus();
   const allUsers = db.getAllUsers();
-  const uptimeSeconds = Math.floor(process.uptime());
-  const hours = Math.floor(uptimeSeconds / 3600);
-  const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-  const seconds = uptimeSeconds % 60;
-  const uptimeStr = `${hours}u ${minutes}m ${seconds}s`;
 
   res.send(`<!DOCTYPE html>
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AutoChecker 24/7 VPS Daemon</title>
+  <title>Teamwork Vrijcheck v2.0 — 24/7 VPS Daemon</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background: #0c0d12; color: #f3f4f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
@@ -379,26 +614,26 @@ app.get('*', (req, res) => {
 <body>
   <div class="card">
     <div class="header">
-      <div class="title">⚡ AutoChecker 24/7</div>
+      <div class="title">⚡ Teamwork Vrijcheck v2.0</div>
       <div class="badge">
         <span class="pulse"></span>
         <span>${st.status === 'polling' ? 'Online & Polling' : 'Actief'}</span>
       </div>
     </div>
-    <p class="desc">Centrale Multi-User Vrijcheck Engine. Luistert 24/7 en checkt alle aangesloten runners parallel vrij.</p>
+    <p class="desc">Centrale Multi-User Vrijcheck Engine met MySQL 8.0 Single Source of Truth &amp; Slimme iCal Integratie voor alle 64 Nederlandse Picnic Hubs.</p>
     
     <div class="grid">
       <div class="item">
-        <div class="item-label">Architectuur</div>
-        <div class="item-val">Multi-User (24/7)</div>
+        <div class="item-label">Database</div>
+        <div class="item-val">${db.isMySQLConnected ? 'MySQL 8.0 (Online)' : 'MySQL 8.0 Ready'}</div>
       </div>
       <div class="item">
         <div class="item-label">Actieve Runners</div>
         <div class="item-val">${allUsers.length} runner(s)</div>
       </div>
       <div class="item">
-        <div class="item-label">Kanaal</div>
-        <div class="item-val">${st.channelName || '#nl-dist-runners-hlm'}</div>
+        <div class="item-label">Ondersteunde Hubs</div>
+        <div class="item-val">64 NL Hubs (HLM=Helmond)</div>
       </div>
       <div class="item">
         <div class="item-label">Target Bot</div>
@@ -407,20 +642,19 @@ app.get('*', (req, res) => {
     </div>
 
     <div class="actions">
-      <a href="/download/apk" class="btn btn-primary">📱 Download APK (Nieuwste Versie)</a>
+      <a href="/download/apk" class="btn btn-primary">📱 Download APK</a>
       <a href="/api/health" class="btn btn-secondary">🔍 API Health</a>
     </div>
 
-    <div class="footer">AutoChecker Multi-Tenant Engine &bull; Port 3001 &bull; REST API &amp; Socket.io</div>
+    <div class="footer">Teamwork Vrijcheck v2.0 &bull; Port 3001 &bull; MySQL 8.0 &amp; Socket.io</div>
   </div>
 </body>
 </html>`);
 });
 
-// Start listening if run directly
 if (process.env.NODE_ENV !== 'test') {
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SERVER] 🚀 Vrijcheck 24/7 Multi-User webserver actief op http://0.0.0.0:${PORT}`);
-    console.log(`[SERVER] 🔒 Beveiligd met Server Token authenticatie & Runner-isolatie.`);
+    console.log(`[SERVER] 🚀 Teamwork Vrijcheck v2.0 Multi-User webserver actief op http://0.0.0.0:${PORT}`);
+    console.log(`[SERVER] 🔒 Beveiligd met Server Token authenticatie, MySQL 8.0 & Runner-isolatie.`);
   });
 }

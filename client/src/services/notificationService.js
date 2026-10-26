@@ -22,22 +22,19 @@ class NotificationService {
           this.hasPermission = true;
         }
 
-        // Create high-importance Android channel for heads-up alert
         try {
           await LocalNotifications.createChannel({
             id: this.CHANNEL_ID,
-            name: 'Picnic Vrijcheck Meldingen',
-            description: 'Meldingen wanneer de Vrijcheck API 1m van tevoren luistert en wanneer een vrijcheck is voltooid',
-            importance: 5, // High importance (heads-up pop up)
-            visibility: 1, // Public on lockscreen
+            name: 'Teamwork Vrijcheck Meldingen',
+            description: 'Meldingen om 10:09/17:09 en direct na vrijcheck-reactie op Slack',
+            importance: 5,
+            visibility: 1,
             sound: 'beep.wav',
             vibration: true,
             lights: true,
             lightColor: '#3171f7'
           });
-        } catch (cErr) {
-          // Channel creation is Android only; iOS ignores gracefully
-        }
+        } catch (_) {}
       } else if (typeof window !== 'undefined' && 'Notification' in window) {
         if (Notification.permission === 'default') {
           const p = await Notification.requestPermission();
@@ -68,12 +65,8 @@ class NotificationService {
     return false;
   }
 
-  /**
-   * Universal notification trigger (Native heads-up banner + Web notification)
-   */
   async showNotification({ title, body, id = null, extra = {} }) {
     await this.init();
-
     const notifId = id || Math.floor(Date.now() % 100000);
 
     try {
@@ -88,7 +81,7 @@ class NotificationService {
               smallIcon: 'ic_launcher',
               iconColor: '#3171f7',
               extra,
-              schedule: { at: new Date(Date.now() + 100) } // immediate
+              schedule: { at: new Date(Date.now() + 100) }
             }
           ]
         });
@@ -108,49 +101,46 @@ class NotificationService {
   }
 
   /**
-   * 1 Minute Before: Trigger when API starts listening for the Slack message
+   * 1 Minute Before (10:09 & 17:09):
+   * "Luisteren gestart: Bot staat scherp voor het vrijcheck-bericht om 10:10 / 17:10."
    */
-  async notifyListeningStarted({ target = '17:10', channel = '#nl-dist-runners-hlm', period = 'de shift' } = {}) {
+  async notifyListeningStarted({ target = '10:10 / 17:10' } = {}) {
     return this.showNotification({
-      title: '⚡ Vrijcheck Luistermodus Gestart',
-      body: `De API is 1m van tevoren begonnen met luisteren naar het Slack bericht in ${channel} (${target}).`,
+      title: '⚡ Luisteren gestart',
+      body: `Luisteren gestart: Bot staat scherp voor het vrijcheck-bericht om ${target}.`,
       id: 10101
     });
   }
 
   /**
-   * Completed: Trigger when reaction has finished / completed, instructing user to check Slack
+   * Directly after reaction:
+   * "Reactie succesvol geplaatst! Kijk nu op Slack om te zien of je vrij hebt gekregen."
    */
-  async notifyVrijcheckCompleted({ success = true, emoji = '1-red', error = null } = {}) {
+  async notifyVrijcheckCompleted({ success = true, error = null } = {}) {
     if (success) {
       return this.showNotification({
-        title: '✅ Vrijcheck Voltooid!',
-        body: `Vrijcheck voltooid met :${emoji}:! Kijk nu op Slack om je shift te controleren.`,
+        title: '✅ Reactie succesvol geplaatst!',
+        body: 'Reactie succesvol geplaatst! Kijk nu op Slack om te zien of je vrij hebt gekregen.',
         id: 20202
       });
     } else {
       return this.showNotification({
         title: '⚠️ Vrijcheck Mislukt',
-        body: `Vrijcheck kon niet worden voltooid (${error || 'geen reactie'}). Kijk nu op Slack!`,
+        body: `Er is een technische fout opgetreden bij het plaatsen van de reactie (${error || 'onbekend'}).`,
         id: 20203
       });
     }
   }
 
-  /**
-   * Schedule advance notifications in native OS alarms for future shifts
-   * Runs 1m before 17:10 (17:09) and 1m before 10:10 (10:09)
-   */
   async scheduleAdvanceShiftAlerts(shifts = {}, channel = '#nl-dist-runners-hlm') {
     if (!Capacitor.isNativePlatform()) return;
     await this.init();
 
     try {
       const pending = await LocalNotifications.getPending();
-      // Cancel previous scheduled advance alarms (IDs starting with 90000+)
       const toCancel = pending.notifications
-        .filter(n => n.id >= 90000 && n.id < 99999)
-        .map(n => ({ id: n.id }));
+        .filter((n) => n.id >= 90000 && n.id < 99999)
+        .map((n) => ({ id: n.id }));
       if (toCancel.length > 0) {
         await LocalNotifications.cancel({ notifications: toCancel });
       }
@@ -159,21 +149,23 @@ class NotificationService {
       const scheduledNotifications = [];
       let alertCounter = 90001;
 
-      // Scan all days in shifts
       for (const [dateStr, dayData] of Object.entries(shifts)) {
         if (!dayData) continue;
         const [year, month, day] = dateStr.split('-').map(Number);
         if (!year || !month || !day) continue;
 
-        // Morning shifts (M1, M2): checked at 17:10 on day - 1, alert at 17:09:00
-        const hasMorning = (dayData.M1?.vrijcheckActive || dayData.M2?.vrijcheckActive);
+        const hasMorning =
+          dayData.M1?.vrijcheckActive ||
+          dayData.M2?.vrijcheckActive ||
+          dayData.M3?.vrijcheckActive ||
+          dayData.M4?.vrijcheckActive;
         if (hasMorning) {
           const alertDate = new Date(year, month - 1, day - 1, 17, 9, 0, 0);
           if (alertDate.getTime() > now.getTime()) {
             scheduledNotifications.push({
               id: alertCounter++,
-              title: '⚡ Vrijcheck Luistermodus Gestart',
-              body: `De API is 1m van tevoren begonnen met luisteren voor de ochtend-shifts in ${channel}.`,
+              title: '⚡ Luisteren gestart',
+              body: `Luisteren gestart: Bot staat scherp voor het vrijcheck-bericht om 17:10 (${channel}).`,
               channelId: this.CHANNEL_ID,
               schedule: { at: alertDate },
               smallIcon: 'ic_launcher',
@@ -182,15 +174,18 @@ class NotificationService {
           }
         }
 
-        // Afternoon shifts (S1, S2, S3): checked at 10:10 on day, alert at 10:09:00
-        const hasAfternoon = (dayData.S1?.vrijcheckActive || dayData.S2?.vrijcheckActive || dayData.S3?.vrijcheckActive);
+        const hasAfternoon =
+          dayData.S1?.vrijcheckActive ||
+          dayData.S2?.vrijcheckActive ||
+          dayData.S3?.vrijcheckActive ||
+          dayData.S4?.vrijcheckActive;
         if (hasAfternoon) {
           const alertDate = new Date(year, month - 1, day, 10, 9, 0, 0);
           if (alertDate.getTime() > now.getTime()) {
             scheduledNotifications.push({
               id: alertCounter++,
-              title: '⚡ Vrijcheck Luistermodus Gestart',
-              body: `De API is 1m van tevoren begonnen met luisteren voor de middag-shifts in ${channel}.`,
+              title: '⚡ Luisteren gestart',
+              body: `Luisteren gestart: Bot staat scherp voor het vrijcheck-bericht om 10:10 (${channel}).`,
               channelId: this.CHANNEL_ID,
               schedule: { at: alertDate },
               smallIcon: 'ic_launcher',
@@ -202,7 +197,6 @@ class NotificationService {
 
       if (scheduledNotifications.length > 0) {
         await LocalNotifications.schedule({ notifications: scheduledNotifications });
-        console.log(`[NOTIFICATIONS] ${scheduledNotifications.length} vooruit-geplande 1m-notificaties ingesteld`);
       }
     } catch (err) {
       console.warn('[NOTIFICATIONS] Fout bij vooruit-plannen van notificaties:', err);

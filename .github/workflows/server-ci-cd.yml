@@ -6,12 +6,14 @@ on:
       - main
     paths:
       - 'server/**'
+      - 'docker-compose.yml'
       - '.github/workflows/server-ci-cd.yml'
   pull_request:
     branches:
       - main
     paths:
       - 'server/**'
+      - 'docker-compose.yml'
   workflow_dispatch:
 
 jobs:
@@ -35,7 +37,7 @@ jobs:
           cd server
           npm ci
 
-      - name: Run Testsuite (Security, Matching & DayPlanner Emulation)
+      - name: Run Testsuite (Security, Matching, iCal Split & DayPlanner Emulation)
         run: |
           cd server
           NODE_ENV=test npm test
@@ -57,7 +59,7 @@ jobs:
           HOST: ${{ secrets.PROD_HOST || secrets.SERVER_HOST || '82.165.110.152' }}
           USER: ${{ secrets.PROD_USER || secrets.SERVER_USER || 'jayv' }}
           PORT: ${{ secrets.PROD_PORT || secrets.SERVER_PORT || '22' }}
-          TARGET_DIR: ${{ secrets.PROD_DEPLOY_PATH || secrets.SERVER_PATH || '/home/jayv/AutoChecker' }}
+          TARGET_DIR: ${{ secrets.PROD_DEPLOY_PATH || secrets.SERVER_PATH || '/home/jayv/vrijcheckapp' }}
         if: env.SSH_KEY != '' && env.HOST != ''
         with:
           host: ${{ env.HOST }}
@@ -66,7 +68,7 @@ jobs:
           port: ${{ env.PORT }}
           envs: TARGET_DIR
           script: |
-            echo "🚀 Deploying AutoChecker 24/7 Webserver to $TARGET_DIR..."
+            echo "🚀 Deploying Teamwork Vrijcheck v2.0 (MySQL + phpMyAdmin + 24/7 Daemon) to $TARGET_DIR..."
             if [ ! -d "$TARGET_DIR" ]; then
               mkdir -p "$TARGET_DIR"
               git clone https://github.com/jayverrijt/AutoChecker.git "$TARGET_DIR"
@@ -75,11 +77,11 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             
-            cd server
             if command -v docker >/dev/null 2>&1; then
               docker compose up -d --build
-              echo "✅ Docker container vrijcheck-24-7 rebuilt and restarted successfully!"
+              echo "✅ Docker Compose stack (vrijcheck-db, vrijcheck-phpmyadmin, vrijcheck-24-7) rebuilt and restarted!"
             elif command -v pm2 >/dev/null 2>&1; then
+              cd server
               npm ci --only=production
               pm2 reload ecosystem.config.cjs --update-env || pm2 start ecosystem.config.cjs
               pm2 save

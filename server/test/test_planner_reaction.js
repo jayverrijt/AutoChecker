@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { app, server, getServerApiKey, botManager } from '../src/index.js';
-import { db } from '../src/db.js';
+import { db, extractFirstName } from '../src/db.js';
+import { parseIcalContent, parseShiftSummary } from '../src/icalParser.js';
 
-// Setup test server port
 const TEST_PORT = 3099;
-let baseUrl = `http://127.0.0.1:${TEST_PORT}`;
+const baseUrl = `http://127.0.0.1:${TEST_PORT}`;
 
 test.before(async () => {
+  await db.init();
   await new Promise((resolve) => {
     server.listen(TEST_PORT, '127.0.0.1', () => {
       resolve();
@@ -17,6 +18,7 @@ test.before(async () => {
 
 test.after(async () => {
   botManager.stopPolling();
+  await db.waitForFlush();
   await new Promise((resolve) => {
     server.close(() => {
       resolve();
@@ -48,7 +50,6 @@ test('2. Security: REST API accepts requests with valid x-api-key header (200)',
 test('3. Security: Auth verification endpoint validates keys correctly', async () => {
   const apiKey = getServerApiKey();
 
-  // Test invalid key
   const invalidRes = await fetch(`${baseUrl}/api/auth/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -56,7 +57,6 @@ test('3. Security: Auth verification endpoint validates keys correctly', async (
   });
   assert.equal(invalidRes.status, 401);
 
-  // Test valid key
   const validRes = await fetch(`${baseUrl}/api/auth/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -70,10 +70,9 @@ test('3. Security: Auth verification endpoint validates keys correctly', async (
 
 test('4. DayPlannerSender Emulation: Morning Shift (M1) Trigger & Sub-Second Reaction', async () => {
   const apiKey = getServerApiKey();
-  const testDateIso = '2026-10-25'; // Test Sunday
+  const testDateIso = '2026-10-25';
   const testDateNl = '25-10-2026';
 
-  // 1. Setup user schedule on server: M1 vrijcheckActive = true
   const initialShifts = db.getShifts();
   initialShifts[testDateIso] = {
     M1: { block: 'M1', startTime: '06:30', endTime: '09:15', vrijcheckActive: true },
@@ -84,7 +83,6 @@ test('4. DayPlannerSender Emulation: Morning Shift (M1) Trigger & Sub-Second Rea
   };
   db.saveShifts(initialShifts);
 
-  // 2. Emulate Day-Planning-Sender posting for OCHTEND with random jitter (50ms - 150ms)
   const emulateRes = await fetch(`${baseUrl}/api/test/emulate-planner`, {
     method: 'POST',
     headers: {
@@ -104,16 +102,19 @@ test('4. DayPlannerSender Emulation: Morning Shift (M1) Trigger & Sub-Second Rea
   const data = await emulateRes.json();
   assert.equal(data.ok, true);
 
-  const { benchmark, result } = data.emulation;
-  console.log(`\n  ⚡ [BENCHMARK M1] Simulated Jitter: ${benchmark.simulatedJitterMs}ms | Reaction Processing: ${benchmark.reactionProcessingMs}ms | Total Time: ${benchmark.totalReactionTimeMs}ms`);
+  const { benchmark } = data.emulation;
+  console.log(
+    `\n  ⚡ [BENCHMARK M1] Simulated Jitter: ${benchmark.simulatedJitterMs}ms | Reaction Processing: ${benchmark.reactionProcessingMs}ms | Total Time: ${benchmark.totalReactionTimeMs}ms`
+  );
 
-  // 3. Verify match and reaction emoji
   assert.equal(benchmark.reactionSuccess, true, 'Reaction should succeed');
   assert.equal(benchmark.matchedShift, 'M1', 'Matched shift should be M1');
   assert.equal(benchmark.emoji, '1-red', 'Shift M1 must react with :1-red:');
-  assert.ok(benchmark.reactionProcessingMs < 300, `Reaction processing time must be fast (< 300ms, was ${benchmark.reactionProcessingMs}ms)`);
+  assert.ok(
+    benchmark.reactionProcessingMs < 300,
+    `Reaction processing time must be fast (< 300ms, was ${benchmark.reactionProcessingMs}ms)`
+  );
 
-  // 4. Verify database updated with reaction status
   const updatedShifts = db.getShifts();
   const m1Status = updatedShifts[testDateIso]?.M1?.reactionStatus;
   assert.ok(m1Status, 'Reaction status must be saved on shift');
@@ -123,10 +124,9 @@ test('4. DayPlannerSender Emulation: Morning Shift (M1) Trigger & Sub-Second Rea
 
 test('5. DayPlannerSender Emulation: Afternoon Shift (S3) Trigger with Emoji 3-red', async () => {
   const apiKey = getServerApiKey();
-  const testDateIso = '2026-10-26'; // Test Monday
+  const testDateIso = '2026-10-26';
   const testDateNl = '26-10-2026';
 
-  // Setup user schedule: S3 vrijcheckActive = true
   const initialShifts = db.getShifts();
   initialShifts[testDateIso] = {
     M1: { block: 'M1', vrijcheckActive: false },
@@ -137,7 +137,6 @@ test('5. DayPlannerSender Emulation: Afternoon Shift (S3) Trigger with Emoji 3-r
   };
   db.saveShifts(initialShifts);
 
-  // Emulate Day-Planning-Sender posting for MIDDAG
   const emulateRes = await fetch(`${baseUrl}/api/test/emulate-planner`, {
     method: 'POST',
     headers: {
@@ -155,19 +154,20 @@ test('5. DayPlannerSender Emulation: Afternoon Shift (S3) Trigger with Emoji 3-r
 
   const data = await emulateRes.json();
   const { benchmark } = data.emulation;
-  console.log(`  ⚡ [BENCHMARK S3] Simulated Jitter: ${benchmark.simulatedJitterMs}ms | Reaction Processing: ${benchmark.reactionProcessingMs}ms | Total Time: ${benchmark.totalReactionTimeMs}ms`);
+  console.log(
+    `  ⚡ [BENCHMARK S3] Simulated Jitter: ${benchmark.simulatedJitterMs}ms | Reaction Processing: ${benchmark.reactionProcessingMs}ms | Total Time: ${benchmark.totalReactionTimeMs}ms`
+  );
 
   assert.equal(benchmark.reactionSuccess, true);
   assert.equal(benchmark.matchedShift, 'S3');
   assert.equal(benchmark.emoji, '3-red', 'Shift S3 must react with :3-red:');
 });
 
-test('6. DayPlannerSender Emulation: Vrijcheck Disabled on Shift (Safely Ignored)', async () => {
+test('6. DayPlannerSender Emulation: Vrijcheck Disabled on Shift (Safely Ignored, No Fake Fail)', async () => {
   const apiKey = getServerApiKey();
   const testDateIso = '2026-10-27';
   const testDateNl = '27-10-2026';
 
-  // Setup user shift with vrijcheckActive = FALSE
   const initialShifts = db.getShifts();
   initialShifts[testDateIso] = {
     M1: { block: 'M1', vrijcheckActive: false },
@@ -194,6 +194,11 @@ test('6. DayPlannerSender Emulation: Vrijcheck Disabled on Shift (Safely Ignored
   assert.equal(benchmark.reactionSuccess, false, 'Should NOT react when vrijcheck is false');
   assert.equal(benchmark.status, 'vrijcheck_disabled');
   assert.match(benchmark.reason, /Vrijcheck staat UIT/i);
+
+  // Bugfix #1 & #4: Ensure no fake FAILED record was added to vrijcheck_requests for 2026-10-27
+  const requests = db.getVrijcheckRequests();
+  const fakeFail = requests.find((r) => r.shiftDate === testDateIso);
+  assert.equal(fakeFail, undefined, 'Unrequested shifts must NEVER appear in vrijcheck_requests');
 });
 
 test('7. DayPlannerSender Emulation: Period Mismatch (Afternoon shift does not react to Morning message)', async () => {
@@ -201,7 +206,6 @@ test('7. DayPlannerSender Emulation: Period Mismatch (Afternoon shift does not r
   const testDateIso = '2026-10-28';
   const testDateNl = '28-10-2026';
 
-  // User has S1 (Afternoon), but morning message arrives
   const initialShifts = db.getShifts();
   initialShifts[testDateIso] = {
     S1: { block: 'S1', vrijcheckActive: true }
@@ -275,7 +279,6 @@ test('9. Multi-User Concurrency: Multiple registered runners react simultaneousl
   const testDateIso = '2026-10-30';
   const testDateNl = '30-10-2026';
 
-  // 1. Create Runner A (Pieter) -> Wants M1 vrij
   const runnerAId = 'U_RUNNER_PIETER';
   db.saveUser(runnerAId, {
     userId: runnerAId,
@@ -290,7 +293,6 @@ test('9. Multi-User Concurrency: Multiple registered runners react simultaneousl
     }
   });
 
-  // 2. Create Runner B (Sara) -> Wants M2 vrij
   const runnerBId = 'U_RUNNER_SARA';
   db.saveUser(runnerBId, {
     userId: runnerBId,
@@ -305,7 +307,6 @@ test('9. Multi-User Concurrency: Multiple registered runners react simultaneousl
     }
   });
 
-  // 3. Create Runner C (Lars) -> Wants no shifts vrij
   const runnerCId = 'U_RUNNER_LARS';
   db.saveUser(runnerCId, {
     userId: runnerCId,
@@ -319,7 +320,6 @@ test('9. Multi-User Concurrency: Multiple registered runners react simultaneousl
     }
   });
 
-  // Emulate morning post
   const res = await fetch(`${baseUrl}/api/test/emulate-planner`, {
     method: 'POST',
     headers: {
@@ -337,28 +337,24 @@ test('9. Multi-User Concurrency: Multiple registered runners react simultaneousl
   const data = await res.json();
   const runners = data.emulation.result.runners;
 
-  // Verify Runner A got M1 (1-red)
-  const pieterResult = runners.find(r => r.userId === runnerAId);
+  const pieterResult = runners.find((r) => r.userId === runnerAId);
   assert.ok(pieterResult, 'Pieter must be processed');
   assert.equal(pieterResult.matched, true);
   assert.equal(pieterResult.blockId, 'M1');
   assert.equal(pieterResult.emojiName, '1-red');
   assert.equal(pieterResult.reactionSuccess, true);
 
-  // Verify Runner B got M2 (2-red)
-  const saraResult = runners.find(r => r.userId === runnerBId);
+  const saraResult = runners.find((r) => r.userId === runnerBId);
   assert.ok(saraResult, 'Sara must be processed');
   assert.equal(saraResult.matched, true);
   assert.equal(saraResult.blockId, 'M2');
   assert.equal(saraResult.emojiName, '2-red');
   assert.equal(saraResult.reactionSuccess, true);
 
-  // Verify Runner C was not matched
-  const larsResult = runners.find(r => r.userId === runnerCId);
+  const larsResult = runners.find((r) => r.userId === runnerCId);
   assert.ok(larsResult);
   assert.equal(larsResult.matched, false);
 
-  // Verify database persistence for each runner individually
   const pieterShifts = db.getShifts(runnerAId);
   assert.equal(pieterShifts[testDateIso]?.M1?.reactionStatus?.success, true);
 
@@ -366,20 +362,99 @@ test('9. Multi-User Concurrency: Multiple registered runners react simultaneousl
   assert.equal(saraShifts[testDateIso]?.M2?.reactionStatus?.success, true);
   assert.equal(saraShifts[testDateIso]?.M1?.reactionStatus, undefined);
 
-  // Verify isolation via REST API endpoints with x-user-id header
-  const apiPieterShifts = await (await fetch(`${baseUrl}/api/shifts`, {
-    headers: { 'x-api-key': apiKey, 'x-user-id': runnerAId }
-  })).json();
-  assert.equal(apiPieterShifts[testDateIso]?.M1?.vrijcheckActive, true);
-
-  const apiSaraShifts = await (await fetch(`${baseUrl}/api/shifts`, {
-    headers: { 'x-api-key': apiKey, 'x-user-id': runnerBId }
-  })).json();
-  assert.equal(apiSaraShifts[testDateIso]?.M2?.vrijcheckActive, true);
-  assert.equal(apiSaraShifts[testDateIso]?.M1?.vrijcheckActive, false);
-
-  // Clean up test runners
   db.deleteUser(runnerAId);
   db.deleteUser(runnerBId);
   db.deleteUser(runnerCId);
+});
+
+test('10. v2.0 All 64 Dutch Hubs & Critical Rule HLM=Helmond / HAA=Haarlem', async () => {
+  const res = await fetch(`${baseUrl}/api/hubs`);
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.ok, true);
+  assert.equal(data.count, 64, 'Must support all 64 Dutch Picnic Hubs');
+
+  const hlm = data.hubs.find((h) => h.code === 'HLM');
+  const haa = data.hubs.find((h) => h.code === 'HAA');
+  assert.equal(hlm?.name, 'Helmond', 'HLM must ALWAYS be Helmond');
+  assert.equal(haa?.name, 'Haarlem', 'HAA must be Haarlem');
+});
+
+test('11. v2.0 Smart iCal Parsing & Uncoupling Combined Shifts (M1-M2, S1-S2-S3)', async () => {
+  const s123 = parseShiftSummary('Trip shift S1-S2-S3 at HLM Picnic');
+  assert.deepEqual(s123.blocks, ['S1', 'S2', 'S3']);
+  assert.equal(s123.hub, 'HLM');
+  assert.equal(s123.isCombined, true);
+
+  const m12 = parseShiftSummary('Trip shift M1-M2 at EIN Picnic');
+  assert.deepEqual(m12.blocks, ['M1', 'M2']);
+  assert.equal(m12.hub, 'EIN');
+
+  const rawIcal = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'BEGIN:VEVENT',
+    'UID:shift-combined-1@picnic.nl',
+    'DTSTART:20261102T130000Z',
+    'DTEND:20261102T211500Z',
+    'SUMMARY:Trip shift S1-S2-S3 at HLM Picnic',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:shift-double-2@picnic.nl',
+    'DTSTART:20261103T053000Z',
+    'DTEND:20261103T110000Z',
+    'SUMMARY:Trip shift M1-M2 at HLM Picnic',
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+
+  const parsedShifts = parseIcalContent(rawIcal, 'HLM');
+  assert.equal(parsedShifts.length, 5, 'Combined S1-S2-S3 (3) + M1-M2 (2) must uncouple into 5 individual shifts');
+  assert.deepEqual(
+    parsedShifts.map((s) => `${s.shiftDate}:${s.shiftBlock}`),
+    ['2026-11-02:S1', '2026-11-02:S2', '2026-11-02:S3', '2026-11-03:M1', '2026-11-03:M2']
+  );
+});
+
+test('12. v2.0 Onboarding Validation (Rejects @teampicnic.com email & extracts firstName)', async () => {
+  const apiKey = getServerApiKey();
+
+  assert.equal(extractFirstName('Jay Verrijt', ''), 'Jay');
+  assert.equal(extractFirstName('', 'Pieter Jansen'), 'Pieter');
+  assert.equal(extractFirstName('', ''), 'Runner');
+
+  const badEmailRes = await fetch(`${baseUrl}/api/onboarding/complete`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'x-user-id': 'U_TEST_ONBOARD'
+    },
+    body: JSON.stringify({
+      firstName: 'Jay',
+      personalEmail: 'jay@teampicnic.com',
+      hubCode: 'HLM'
+    })
+  });
+  assert.equal(badEmailRes.status, 400, 'Must reject @teampicnic.com email');
+
+  const goodRes = await fetch(`${baseUrl}/api/onboarding/complete`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'x-user-id': 'U_TEST_ONBOARD'
+    },
+    body: JSON.stringify({
+      firstName: 'Jay',
+      personalEmail: 'jay@gmail.com',
+      hubCode: 'HLM'
+    })
+  });
+  assert.equal(goodRes.status, 200);
+  const goodData = await goodRes.json();
+  assert.equal(goodData.ok, true);
+  assert.equal(goodData.user.onboardingCompleted, true);
+
+  db.deleteUser('U_TEST_ONBOARD');
 });

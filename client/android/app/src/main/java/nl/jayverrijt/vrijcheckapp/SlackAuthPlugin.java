@@ -17,6 +17,7 @@ import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
+import android.webkit.WebStorage;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
@@ -51,14 +52,58 @@ public class SlackAuthPlugin extends Plugin {
     @PluginMethod
     public void login(PluginCall call) {
         String targetUrl = call.getString("workspaceUrl", "https://picnic.enterprise.slack.com");
+        boolean forceFresh = call.getBoolean("clearSession", false);
 
         getActivity().runOnUiThread(() -> {
             try {
+                if (forceFresh) {
+                    performHardSessionWipe();
+                }
                 showLoginDialog(targetUrl, call);
             } catch (Exception e) {
                 call.reject("Fout bij openen van login scherm: " + e.getMessage());
             }
         });
+    }
+
+    @PluginMethod
+    public void logout(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                performHardSessionWipe();
+                JSObject ret = new JSObject();
+                ret.put("ok", true);
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("Fout bij wissen van sessie: " + e.getMessage());
+            }
+        });
+    }
+
+    private void performHardSessionWipe() {
+        try {
+            CookieManager cookieManager = CookieManager.getInstance();
+            cookieManager.removeAllCookies(null);
+            cookieManager.flush();
+        } catch (Exception ignored) {}
+
+        try {
+            WebStorage.getInstance().deleteAllData();
+        } catch (Exception ignored) {}
+
+        try {
+            if (webView != null) {
+                webView.clearCache(true);
+                webView.clearHistory();
+                webView.clearFormData();
+            } else if (getActivity() != null) {
+                WebView tempWv = new WebView(getActivity());
+                tempWv.clearCache(true);
+                tempWv.clearHistory();
+                tempWv.clearFormData();
+                tempWv.destroy();
+            }
+        } catch (Exception ignored) {}
     }
 
     private void showLoginDialog(String startUrl, PluginCall call) {

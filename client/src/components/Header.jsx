@@ -1,6 +1,6 @@
 import React from 'react';
-import { ChevronDown, Calendar, RotateCcw, SlidersHorizontal } from 'lucide-react';
-import { format, startOfWeek, endOfWeek, addWeeks, subWeeks, isSameWeek } from 'date-fns';
+import { ChevronDown, Calendar, RotateCcw } from 'lucide-react';
+import { format, startOfWeek, endOfWeek, addWeeks } from 'date-fns';
 import { nl } from 'date-fns/locale';
 
 function formatCapitalizedWeekRange(ws, we) {
@@ -22,14 +22,11 @@ export const Header = ({
   onNextWeek,
   onRefresh,
   isRefreshing = false,
-  weekNumber,
-  isLiveBotActive
+  weekNumber
 }) => {
-  // Format Month Year (e.g. "Oktober 2026")
   const monthYearString = format(currentDate, 'MMMM yyyy', { locale: nl });
   const capitalizedMonthYear = monthYearString.charAt(0).toUpperCase() + monthYearString.slice(1);
 
-  // Generate 5 adjacent week tabs centered on currentDate (matching Teamwork)
   const currentWeekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
   const weekOffsets = [-1, 0, 1, 2, 3];
 
@@ -49,23 +46,19 @@ export const Header = ({
 
   return (
     <header className="pt-notch-safe pb-0 bg-[#0e0f12] select-none sticky top-0 z-20 backdrop-blur-md">
-      {/* Top row: Month Dropdown & Header Action Icons (Matches Teamwork screenshot exactly) */}
+      {/* Top row: Month Dropdown & Only 2 Header Action Icons (Agenda/Vandaag & Reload) */}
       <div className="flex items-center justify-between px-4 pb-2">
-        {/* Month Dropdown -> Opens DatePickerModal */}
         <div
           onClick={onOpenDatePicker}
           className="flex items-center gap-1.5 cursor-pointer hover:opacity-85 active:scale-95 transition-all"
           title="Kies een datum"
         >
-          <span className="text-xl font-bold text-white tracking-tight">
-            {capitalizedMonthYear}
-          </span>
+          <span className="text-xl font-bold text-white tracking-tight">{capitalizedMonthYear}</span>
           <ChevronDown className="w-5 h-5 text-neutral-400 stroke-[2.5]" />
         </div>
 
-        {/* Right Action Icons matching Teamwork: Calendar (today), Filter, Refresh */}
+        {/* Right Action Icons: ONLY Calendar (jump to today) and Reload (ververs iCal/shifts) */}
         <div className="flex items-center gap-3.5 text-neutral-300">
-          {/* Calendar jump to today */}
           <button
             type="button"
             onClick={onGoToToday}
@@ -76,16 +69,6 @@ export const Header = ({
             <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-blue-500"></span>
           </button>
 
-          {/* Filter options */}
-          <button
-            type="button"
-            className="p-1 hover:text-white transition-colors active:scale-90"
-            title="Filter opties"
-          >
-            <SlidersHorizontal className="w-5 h-5 stroke-[2]" />
-          </button>
-
-          {/* Refresh icon */}
           <button
             type="button"
             onClick={onRefresh}
@@ -93,23 +76,21 @@ export const Header = ({
             className={`p-1 hover:text-white transition-colors active:scale-90 ${
               isRefreshing ? 'animate-spin text-blue-400' : ''
             }`}
-            title="Ververs Rooster"
+            title="Ververs iCal & Rooster"
           >
             <RotateCcw className="w-5 h-5 stroke-[2]" />
           </button>
         </div>
       </div>
 
-      {/* Week Tabs Strip (Matches Teamwork screenshot: text tabs with active bottom blue indicator bar) */}
+      {/* Week Tabs Strip */}
       <div className="flex items-center gap-6 overflow-x-auto no-scrollbar px-4 pt-1">
         {weekTabs.map((tab) => (
           <button
             key={tab.label}
             onClick={() => onSelectDate(tab.startDate)}
             className={`text-sm tracking-tight whitespace-nowrap transition-colors relative pb-2.5 font-medium ${
-              tab.isCurrent
-                ? 'text-white font-bold'
-                : 'text-neutral-400 hover:text-neutral-200'
+              tab.isCurrent ? 'text-white font-bold' : 'text-neutral-400 hover:text-neutral-200'
             }`}
           >
             <span>{tab.label}</span>
@@ -120,14 +101,10 @@ export const Header = ({
         ))}
       </div>
 
-      {/* Divider line under tabs */}
       <div className="border-b border-[#22242f] w-full" />
 
-      {/* Teamwork Subheader: Week number */}
       <div className="flex items-center px-4 py-2 bg-[#121316] border-b border-[#22242f]">
-        <span className="text-sm font-bold text-white tracking-tight">
-          Week {weekNumber || '43'}
-        </span>
+        <span className="text-sm font-bold text-white tracking-tight">Week {weekNumber || '43'}</span>
       </div>
     </header>
   );

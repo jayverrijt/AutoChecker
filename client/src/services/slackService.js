@@ -1,13 +1,27 @@
-import { Capacitor, CapacitorHttp } from '@capacitor/core';
-import { isCriticalListeningWindow } from '../utils/constants';
+import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
+import { isCriticalListeningWindow, extractFirstName, APP_VERSION, isVersionOutdated } from '../utils/constants';
 import { getShiftForBlock, saveShiftBlock } from '../utils/shiftHelpers';
 import { appStorage } from '../utils/storage';
+import { getHubByCode } from '../components/HubSelectorModal';
+
+const SlackAuth = registerPlugin('SlackAuth');
 
 const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
 export const DEFAULT_PROD_SERVER_URL = 'http://82.165.110.152:3001';
 export const DEFAULT_PROD_SERVER_TOKEN = 'vc_prod_1464e0be3d28f34112b6a5bfe545eb04';
+
+export const DEFAULT_EMOJI_MAPPING = {
+  M1: '1-red',
+  M2: '2-red',
+  M3: '3-red',
+  M4: '4-red',
+  S1: '1-red',
+  S2: '2-red',
+  S3: '3-red',
+  S4: '4-red'
+};
 
 export const DEFAULT_SETTINGS = {
   workspaceUrl: 'https://picnic.enterprise.slack.com',
@@ -16,23 +30,25 @@ export const DEFAULT_SETTINGS = {
   channelName: '#nl-dist-runners-hlm',
   channelId: 'CAM2MJTA9',
   hubCode: 'HLM',
-  realName: 'Jay Verrijt',
-  displayName: 'Jay Verrijt',
-  firstName: 'Jay',
+  realName: '',
+  displayName: '',
+  firstName: 'Runner',
+  personalEmail: '',
+  icalUrl: '',
+  onboardingCompleted: false,
   avatarUrl: null,
   botSenderName: 'Day-Planning-Sender',
   autoReact: true,
+  notify1mBefore: true,
+  notifyCompletion: true,
   pollIntervalMs: 1000,
   soundEnabled: true,
+  serverMode: 'DEFAULT', // 'DEFAULT' | 'OTHER'
+  customServerHost: '',
+  customServerPort: '3001',
   serverUrl: DEFAULT_PROD_SERVER_URL,
   serverToken: DEFAULT_PROD_SERVER_TOKEN,
-  emojiMapping: {
-    M1: '1-red',
-    M2: '2-red',
-    S1: '1-red',
-    S2: '2-red',
-    S3: '3-red'
-  }
+  emojiMapping: { ...DEFAULT_EMOJI_MAPPING }
 };
 
 export const DEFAULT_SHIFTS = {};
@@ -52,7 +68,7 @@ class SlackService {
     try {
       if (typeof window !== 'undefined') {
         if (window.__DEBUG_MODE__) return true;
-        if (window.location && window.location.search && window.location.search.includes('debug=true')) return true;
+        if (window.location?.search?.includes('debug=true')) return true;
         if (appStorage.getItem('vrijcheck_debug_mode') === 'true') return true;
       }
       return Boolean(import.meta.env?.DEV);
@@ -71,7 +87,7 @@ class SlackService {
       const generated = 'runner_' + Math.random().toString(36).substring(2, 9);
       appStorage.setItem('vrijcheck_user_id', generated);
       return generated;
-    } catch (e) {
+    } catch (_) {
       return 'runner_default';
     }
   }
@@ -80,8 +96,24 @@ class SlackService {
     if (userId) {
       try {
         appStorage.setItem('vrijcheck_user_id', userId.trim());
-      } catch (e) {}
+      } catch (_) {}
     }
+  }
+
+  getActiveServerUrl(settings = null) {
+    const s = settings || this.getSettings();
+    if (s.serverMode === 'OTHER' && s.customServerHost && s.customServerHost.trim().length > 0) {
+      let host = s.customServerHost.trim().replace(/\/+$/, '');
+      if (!/^https?:\/\//i.test(host)) {
+        host = `http://${host}`;
+      }
+      const port = (s.customServerPort || '').toString().trim();
+      if (port && !host.match(/:\d+$/)) {
+        return `${host}:${port}`;
+      }
+      return host;
+    }
+    return (s.serverUrl || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
   }
 
   getCleanCookie(rawCookie) {
@@ -93,6 +125,62 @@ class SlackService {
       return `d=${val}`;
     }
     return val ? `d=${val}` : '';
+  }
+
+  async _httpJson(url, { method = 'GET', headers = {}, body = null, timeout = 5000 } = {}) {
+    if (Capacitor.isNativePlatform()) {
+      const res = await CapacitorHttp.request({
+        url,
+        method,
+        headers,
+        data: body || undefined,
+        connectTimeout: timeout,
+        readTimeout: timeout
+      });
+      return res.data;
+    } else {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), timeout);
+      try {
+        const res = await fetch(url, {
+          method,
+          headers,
+          body: body ? JSON.stringify(body) : undefined,
+          signal: controller.signal
+        });
+        return await res.json();
+      } finally {
+        clearTimeout(t);
+      }
+    }
+  }
+
+  /**
+   * Global Version Check (Section 4):
+   * Checks if the local frontend APP_VERSION is behind the latest frontend release.
+   * For OTHER (Custom Backend), only checks frontend app version, never backend version differences.
+   */
+  async checkFrontendUpdateRequired(settings = null) {
+    const s = settings || this.getSettings();
+    const checkUrl = `${DEFAULT_PROD_SERVER_URL}/api/version`;
+    try {
+      const data = await this._httpJson(checkUrl, { method: 'GET', timeout: 3500 });
+      if (data?.ok && data.minFrontendVersion) {
+        const outdated = isVersionOutdated(APP_VERSION, data.minFrontendVersion);
+        return {
+          updateRequired: outdated,
+          currentVersion: APP_VERSION,
+          latestFrontendVersion: data.latestFrontendVersion || data.minFrontendVersion,
+          serverMode: s.serverMode || 'DEFAULT'
+        };
+      }
+    } catch (_) {}
+    return {
+      updateRequired: false,
+      currentVersion: APP_VERSION,
+      latestFrontendVersion: APP_VERSION,
+      serverMode: s.serverMode || 'DEFAULT'
+    };
   }
 
   async testConnection(settings = null) {
@@ -107,9 +195,9 @@ class SlackService {
     try {
       if (Capacitor.isNativePlatform()) {
         const headers = {
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
           'User-Agent': DESKTOP_UA,
-          'Accept': 'application/json'
+          Accept: 'application/json'
         };
         if (cookie) {
           headers['Cookie'] = cookie;
@@ -132,7 +220,11 @@ class SlackService {
           };
         }
 
-        // 1b. Fetch User Profile from Slack (Real Name, Avatar, etc.)
+        if (authData.user_id) {
+          this.setUserId(authData.user_id);
+        }
+
+        // 1b. Fetch User Profile from Slack & extract firstName (Bugfix #2)
         let profile = null;
         try {
           const profileRes = await CapacitorHttp.get({
@@ -143,72 +235,118 @@ class SlackService {
           });
           if (profileRes.data?.ok && profileRes.data.profile) {
             const p = profileRes.data.profile;
+            const displayName = (p.display_name || '').trim();
+            const realName = (p.real_name || '').trim();
+            const firstName = extractFirstName(displayName, realName, 'Runner');
             profile = {
-              realName: p.real_name || p.display_name || authData.user,
-              displayName: p.display_name || p.real_name || authData.user,
-              firstName: p.first_name || (p.real_name ? p.real_name.split(' ')[0] : 'Jay'),
+              realName: realName || displayName || authData.user || 'Runner',
+              displayName: displayName || realName || authData.user || 'Runner',
+              firstName,
               lastName: p.last_name || '',
-              avatarUrl: p.image_192 || p.image_512 || p.image_72 || null,
-              email: p.email || ''
+              avatarUrl: p.image_192 || p.image_512 || p.image_72 || null
             };
-            this.saveSettings({
-              realName: profile.realName,
-              displayName: profile.displayName,
-              firstName: profile.firstName,
-              avatarUrl: profile.avatarUrl
-            });
           }
         } catch (e) {
           console.warn('Profile fetch warning:', e);
         }
 
-        // 1c. Discover Runner Channels (#nl-dist-runners-*)
-        let runnerChannels = [];
+        // 1c. Discover Runner Channels (#nl-dist-runners-<hubcode>)
+        const runnerChannels = [];
+        const seenCodes = new Set();
         try {
-          const countsRes = await CapacitorHttp.get({
-            url: 'https://slack.com/api/client.counts',
+          const convRes = await CapacitorHttp.get({
+            url: 'https://slack.com/api/users.conversations?types=public_channel,private_channel&limit=1000',
             headers,
-            connectTimeout: 4000,
-            readTimeout: 4000
+            connectTimeout: 4500,
+            readTimeout: 4500
           });
-          if (countsRes.data?.ok && Array.isArray(countsRes.data.channels)) {
-            for (const ch of countsRes.data.channels) {
-              if (ch.id) {
-                try {
-                  const infoRes = await CapacitorHttp.get({
-                    url: `https://slack.com/api/conversations.info?channel=${ch.id}`,
-                    headers,
-                    connectTimeout: 3000,
-                    readTimeout: 3000
+          if (convRes.data?.ok && Array.isArray(convRes.data.channels)) {
+            for (const ch of convRes.data.channels) {
+              const cname = (ch.name || '').toLowerCase();
+              const m = cname.match(/^nl-dist-runners-([a-z0-9]+)$/i);
+              if (m) {
+                const code = m[1].toUpperCase();
+                if (!seenCodes.has(code)) {
+                  seenCodes.add(code);
+                  const hubObj = getHubByCode(code);
+                  runnerChannels.push({
+                    id: ch.id,
+                    name: `#${cname}`,
+                    hubCode: code,
+                    hubName: hubObj.name
                   });
-                  if (infoRes.data?.ok && infoRes.data.channel) {
-                    const cname = infoRes.data.channel.name || '';
-                    if (cname.startsWith('nl-dist-runners-') || cname.includes('runners')) {
-                      const code = cname.replace(/^nl-dist-runners-/, '').toUpperCase();
-                      runnerChannels.push({
-                        id: ch.id,
-                        name: `#${cname}`,
-                        hubCode: code
-                      });
-                    }
-                  }
-                } catch (_) {}
+                }
               }
             }
           }
-        } catch (e) {
-          console.warn('Runner channels check warning:', e);
+        } catch (_) {}
+
+        if (runnerChannels.length === 0) {
+          try {
+            const countsRes = await CapacitorHttp.get({
+              url: 'https://slack.com/api/client.counts',
+              headers,
+              connectTimeout: 4000,
+              readTimeout: 4000
+            });
+            if (countsRes.data?.ok && Array.isArray(countsRes.data.channels)) {
+              for (const ch of countsRes.data.channels) {
+                if (ch.id) {
+                  try {
+                    const infoRes = await CapacitorHttp.get({
+                      url: `https://slack.com/api/conversations.info?channel=${ch.id}`,
+                      headers,
+                      connectTimeout: 3000,
+                      readTimeout: 3000
+                    });
+                    if (infoRes.data?.ok && infoRes.data.channel) {
+                      const cname = (infoRes.data.channel.name || '').toLowerCase();
+                      const m = cname.match(/^nl-dist-runners-([a-z0-9]+)$/i);
+                      if (m) {
+                        const code = m[1].toUpperCase();
+                        if (!seenCodes.has(code)) {
+                          seenCodes.add(code);
+                          const hubObj = getHubByCode(code);
+                          runnerChannels.push({
+                            id: ch.id,
+                            name: `#${cname}`,
+                            hubCode: code,
+                            hubName: hubObj.name
+                          });
+                        }
+                      }
+                    }
+                  } catch (_) {}
+                }
+              }
+            }
+          } catch (_) {}
         }
 
-        // If no channels detected from client.counts, ensure current channel is included
-        if (runnerChannels.length === 0 && currentSettings.channelName) {
-          const curClean = currentSettings.channelName.replace(/^#?nl-dist-runners-/, '').toUpperCase();
-          runnerChannels.push({
-            id: currentSettings.channelId || 'CAM2MJTA9',
-            name: currentSettings.channelName,
-            hubCode: curClean || 'HLM'
-          });
+        // Automatic Hub Detection: if exact 1 runner channel found, set automatically!
+        let nextHubCode = currentSettings.hubCode || 'HLM';
+        let nextChannelName = currentSettings.channelName || '#nl-dist-runners-hlm';
+        let nextChannelId = currentSettings.channelId || 'CAM2MJTA9';
+
+        if (runnerChannels.length === 1) {
+          nextHubCode = runnerChannels[0].hubCode;
+          nextChannelName = runnerChannels[0].name;
+          nextChannelId = runnerChannels[0].id;
         }
+
+        this.saveSettings({
+          ...(profile
+            ? {
+                realName: profile.realName,
+                displayName: profile.displayName,
+                firstName: profile.firstName,
+                avatarUrl: profile.avatarUrl
+              }
+            : {}),
+          hubCode: nextHubCode,
+          channelName: nextChannelName,
+          channelId: nextChannelId
+        });
 
         this.cachedAuth = {
           user: authData.user,
@@ -216,18 +354,18 @@ class SlackService {
           userId: authData.user_id,
           teamId: authData.team_id,
           profile,
-          runnerChannels
+          runnerChannels,
+          autoSelectedHub: runnerChannels.length === 1 ? runnerChannels[0] : null
         };
 
         // 2. Test Channel
-        const channelId = currentSettings.channelId || 'CAM2MJTA9';
         let channelOk = false;
         let messageCount = 0;
         let messages = [];
 
         try {
           const histRes = await CapacitorHttp.get({
-            url: `https://slack.com/api/conversations.history?channel=${channelId}&limit=10`,
+            url: `https://slack.com/api/conversations.history?channel=${nextChannelId}&limit=10`,
             headers,
             connectTimeout: 4000,
             readTimeout: 4000
@@ -238,17 +376,15 @@ class SlackService {
             messageCount = messages.length;
             this.recentMessages = messages;
           }
-        } catch (e) {
-          console.warn('Channel check warning:', e);
-        }
+        } catch (_) {}
 
         const result = {
           ok: true,
           auth: this.cachedAuth,
           channel: {
             ok: channelOk,
-            name: currentSettings.channelName || '#nl-dist-runners-hlm',
-            id: channelId,
+            name: nextChannelName,
+            id: nextChannelId,
             messageCount
           },
           recentMessages: messages
@@ -257,10 +393,35 @@ class SlackService {
         this.emitStatus();
         return result;
       } else {
-        // Desktop browser fallback
-        const res = await fetch('http://localhost:3001/api/test-connection');
-        const data = await res.json();
+        // Desktop browser / backend testConnection
+        const serverUrl = this.getActiveServerUrl(currentSettings);
+        const serverToken = currentSettings.serverToken || DEFAULT_PROD_SERVER_TOKEN;
+
+        // Save token to server first so /api/bot/test-connection can verify it
+        await this._httpJson(`${serverUrl}/api/settings`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': serverToken,
+            'x-user-id': this.getUserId()
+          },
+          body: currentSettings
+        }).catch(() => {});
+
+        const data = await this._httpJson(`${serverUrl}/api/bot/test-connection`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': serverToken,
+            'x-user-id': this.getUserId()
+          },
+          body: {}
+        });
+
         if (data?.ok && data?.auth) {
+          if (data.auth.userId) {
+            this.setUserId(data.auth.userId);
+          }
           this.cachedAuth = data.auth;
           this.emitStatus();
         }
@@ -272,41 +433,170 @@ class SlackService {
     }
   }
 
+  async completeOnboarding(payload = {}) {
+    const currentSettings = this.getSettings();
+    const serverUrl = this.getActiveServerUrl(currentSettings);
+    const serverToken = currentSettings.serverToken || DEFAULT_PROD_SERVER_TOKEN;
+
+    const mergedLocal = this.saveSettings({
+      ...payload,
+      onboardingCompleted: true
+    });
+
+    try {
+      const data = await this._httpJson(`${serverUrl}/api/onboarding/complete`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': serverToken,
+          'x-user-id': this.getUserId()
+        },
+        body: {
+          ...mergedLocal,
+          ...payload,
+          userId: this.getUserId()
+        },
+        timeout: 12000
+      });
+
+      if (data?.ok) {
+        if (data.user) {
+          appStorage.setItem('vrijcheck_settings', JSON.stringify({ ...mergedLocal, ...data.user }));
+        }
+        if (data.shifts) {
+          appStorage.setItem('vrijcheck_shifts', JSON.stringify(data.shifts));
+        }
+      }
+      return data;
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  }
+
+  async syncIcalOnServer(icalUrl = null, rawIcal = null) {
+    const currentSettings = this.getSettings();
+    const serverUrl = this.getActiveServerUrl(currentSettings);
+    const serverToken = currentSettings.serverToken || DEFAULT_PROD_SERVER_TOKEN;
+    const targetUrl = (icalUrl ?? currentSettings.icalUrl ?? '').trim();
+
+    if (targetUrl) {
+      this.saveSettings({ icalUrl: targetUrl });
+    }
+
+    try {
+      const data = await this._httpJson(`${serverUrl}/api/ical/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': serverToken,
+          'x-user-id': this.getUserId()
+        },
+        body: {
+          icalUrl: targetUrl,
+          rawIcal,
+          hubCode: currentSettings.hubCode || 'HLM'
+        },
+        timeout: 12000
+      });
+
+      if (data?.ok && data.shifts) {
+        appStorage.setItem('vrijcheck_shifts', JSON.stringify(data.shifts));
+      }
+      return data;
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  }
+
+  async fetchVrijcheckRequests() {
+    const currentSettings = this.getSettings();
+    const serverUrl = this.getActiveServerUrl(currentSettings);
+    const serverToken = currentSettings.serverToken || DEFAULT_PROD_SERVER_TOKEN;
+
+    try {
+      const data = await this._httpJson(`${serverUrl}/api/vrijcheck-requests`, {
+        method: 'GET',
+        headers: {
+          'x-api-key': serverToken,
+          'x-user-id': this.getUserId()
+        },
+        timeout: 5000
+      });
+      if (data?.ok && Array.isArray(data.requests)) {
+        appStorage.setItem('vrijcheck_requests', JSON.stringify(data.requests));
+        return data.requests;
+      }
+    } catch (_) {}
+
+    try {
+      const cached = appStorage.getItem('vrijcheck_requests');
+      if (cached) return JSON.parse(cached);
+    } catch (_) {}
+    return [];
+  }
+
+  async setVrijcheckRequestOnServer({ shiftDate, shiftBlock, active, startTime, endTime, hubCode }) {
+    const currentSettings = this.getSettings();
+    const serverUrl = this.getActiveServerUrl(currentSettings);
+    const serverToken = currentSettings.serverToken || DEFAULT_PROD_SERVER_TOKEN;
+
+    try {
+      const data = await this._httpJson(`${serverUrl}/api/vrijcheck-requests`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': serverToken,
+          'x-user-id': this.getUserId()
+        },
+        body: {
+          shiftDate,
+          shiftBlock,
+          active,
+          startTime,
+          endTime,
+          hubCode: hubCode || currentSettings.hubCode || 'HLM'
+        },
+        timeout: 5000
+      });
+      if (data?.ok) {
+        if (data.shifts) appStorage.setItem('vrijcheck_shifts', JSON.stringify(data.shifts));
+        if (data.requests) appStorage.setItem('vrijcheck_requests', JSON.stringify(data.requests));
+      }
+      return data;
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  }
+
   async addReaction(channelId, messageTs, emoji, settings = null) {
     const currentSettings = settings || this.getSettings();
-    const serverUrl = (currentSettings?.serverUrl || DEFAULT_PROD_SERVER_URL).trim();
+    const serverUrl = this.getActiveServerUrl(currentSettings);
     const serverToken = currentSettings?.serverToken || DEFAULT_PROD_SERVER_TOKEN;
     const cleanEmoji = emoji.replace(/^:+|:+$/g, '');
 
-    // 1. If 24/7 VPS server is configured, try server first (fast, sub-second reaction)
-    if (serverUrl && !serverUrl.includes('localhost:3001')) {
+    if (serverUrl) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3500);
-        const res = await fetch(`${serverUrl.replace(/\/+$/, '')}/api/bot/test-reaction`, {
+        const data = await this._httpJson(`${serverUrl}/api/bot/test-reaction`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'x-api-key': serverToken,
             'x-user-id': this.getUserId()
           },
-          body: JSON.stringify({ emoji: cleanEmoji, userId: this.getUserId() }),
-          signal: controller.signal
+          body: { emoji: cleanEmoji, userId: this.getUserId() },
+          timeout: 4000
         });
-        clearTimeout(timeoutId);
-        const data = await res.json();
         if (data?.ok) return { ok: true, emoji: cleanEmoji };
       } catch (err) {
-        console.warn('VPS server test-reaction failed, falling back to direct Slack:', err.message);
+        console.warn('VPS server test-reaction fallback:', err.message);
       }
     }
 
-    // 2. Direct Slack API (using https://slack.com/api/reactions.add with timeout)
     const token = (currentSettings.slackToken || '').trim();
     const cookie = this.getCleanCookie(currentSettings.slackCookie);
 
     const headers = {
-      'Authorization': `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json; charset=utf-8',
       'User-Agent': DESKTOP_UA
     };
@@ -332,12 +622,7 @@ class SlackService {
         return { ok: false, error: e.message || 'Slack verbinding time-out' };
       }
     } else {
-      const res = await fetch('http://localhost:3001/api/test-reaction', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channel: channelId, timestamp: messageTs, emoji: cleanEmoji })
-      });
-      return res.json();
+      return { ok: false, error: 'Kon reactie niet plaatsen via server.' };
     }
   }
 
@@ -350,7 +635,7 @@ class SlackService {
 
     if (Capacitor.isNativePlatform()) {
       const headers = {
-        'Authorization': `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
         'User-Agent': DESKTOP_UA
       };
       if (cookie) {
@@ -367,18 +652,15 @@ class SlackService {
         const msgs = res.data?.ok ? res.data.messages : [];
         this.recentMessages = msgs;
         return msgs;
-      } catch (e) {
+      } catch (_) {
         return [];
       }
-    } else {
-      const res = await fetch('http://localhost:3001/api/recent-messages');
-      const data = await res.json();
-      return data?.messages || [];
     }
+    return [];
   }
 
   async fetchServerStatus(serverUrl, serverToken) {
-    const targetUrl = (serverUrl || DEFAULT_PROD_SERVER_URL).trim();
+    const targetUrl = (serverUrl || this.getActiveServerUrl()).trim();
     const targetToken = serverToken || DEFAULT_PROD_SERVER_TOKEN;
     if (!targetUrl) {
       return { ok: false, error: 'Geen VPS server URL geconfigureerd in Instellingen' };
@@ -422,10 +704,8 @@ class SlackService {
     }
   }
 
-  // Real-time Background Poller (Alleen actief in test/debugger modus!)
   startPolling(onReactionCallback = null) {
     if (!this.isTestingMode()) {
-      console.log('[SLACK SERVICE] Standalone modus: lokale toestel-poller is uitgeschakeld. 24/7 VPS server handelt alle reacties af.');
       return;
     }
     this.stopPolling();
@@ -438,14 +718,11 @@ class SlackService {
       if (!this.isPollingActive) return;
 
       const windowCheck = isCriticalListeningWindow();
-      // If in critical window (17:10 or 10:10): hyper-speed 500ms! Otherwise 1200ms
       const pollDelay = windowCheck.active ? 500 : 1200;
 
       try {
         await this.checkAndReact();
-      } catch (err) {
-        console.warn('Polling check error:', err);
-      }
+      } catch (_) {}
 
       if (this.isPollingActive) {
         this.pollTimer = setTimeout(pollLoop, pollDelay);
@@ -477,49 +754,48 @@ class SlackService {
       if (this.processedMessageIds.has(msg.ts)) continue;
 
       const text = msg.text || '';
-      const isPlanner = msg.user === 'U062ALTD6DQ' ||
-                        text.includes('*OCHTEND') ||
-                        text.includes('*MIDDAG') ||
-                        text.includes('Graag voor') || 
-                        text.includes('Overschotten') || 
-                        text.includes('Check je vrij') || 
-                        (msg.username && msg.username.includes('Planning'));
+      const isPlanner =
+        msg.user === 'U062ALTD6DQ' ||
+        text.includes('*OCHTEND') ||
+        text.includes('*MIDDAG') ||
+        text.includes('Graag voor') ||
+        text.includes('Overschotten') ||
+        text.includes('Check je vrij') ||
+        (msg.username && msg.username.includes('Planning'));
 
       if (!isPlanner) {
         this.processedMessageIds.add(msg.ts);
         continue;
       }
 
-      // Extract date & period
       const dateMatch = text.match(/(\d{1,2})\s*[-/]\s*(\d{1,2})\s*[-/]\s*(\d{2,4})/);
       let targetIsoDate = null;
       if (dateMatch) {
-        let d = dateMatch[1].padStart(2, '0');
-        let m = dateMatch[2].padStart(2, '0');
-        let y = dateMatch[3].length === 2 ? '20' + dateMatch[3] : dateMatch[3];
+        const d = dateMatch[1].padStart(2, '0');
+        const m = dateMatch[2].padStart(2, '0');
+        const y = dateMatch[3].length === 2 ? '20' + dateMatch[3] : dateMatch[3];
         targetIsoDate = `${y}-${m}-${d}`;
       }
 
       let period = null;
       if (/OCHTEND/i.test(text)) period = 'OCHTEND';
-      else if (/MIDDAG/i.test(text)) period = 'MIDDAG';
+      else if (/MIDDAG/i.test(text) || /AVOND/i.test(text)) period = 'MIDDAG';
 
       if (!targetIsoDate && period === 'OCHTEND') {
-        // Morning release at 17:10 is for tomorrow
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
         targetIsoDate = tomorrow.toISOString().split('T')[0];
       } else if (!targetIsoDate && period === 'MIDDAG') {
-        // Afternoon release at 10:10 is for today
         targetIsoDate = new Date().toISOString().split('T')[0];
       }
 
       if (targetIsoDate) {
-        const candidateBlocks = period === 'OCHTEND' 
-          ? ['M1', 'M2'] 
-          : period === 'MIDDAG' 
-          ? ['S1', 'S2', 'S3'] 
-          : ['M1', 'M2', 'S1', 'S2', 'S3'];
+        const candidateBlocks =
+          period === 'OCHTEND'
+            ? ['M1', 'M2', 'M3', 'M4']
+            : period === 'MIDDAG'
+            ? ['S1', 'S2', 'S3', 'S4']
+            : ['M1', 'M2', 'M3', 'M4', 'S1', 'S2', 'S3', 'S4'];
 
         let anyReacted = false;
 
@@ -527,7 +803,7 @@ class SlackService {
           const userShift = getShiftForBlock(currentShifts, targetIsoDate, bId);
           if (userShift && userShift.vrijcheckActive === true && !userShift.reactionStatus?.success) {
             const mapping = settings.emojiMapping || DEFAULT_SETTINGS.emojiMapping;
-            const emojiToReact = mapping[bId] || (bId.includes('3') ? '3-red' : bId.includes('2') ? '2-red' : '1-red');
+            const emojiToReact = mapping[bId] || '1-red';
 
             const startTime = Date.now();
             const reactRes = await this.addReaction(channelId, msg.ts, emojiToReact, settings);
@@ -537,7 +813,9 @@ class SlackService {
               anyReacted = true;
               const updatedShift = {
                 ...userShift,
+                vrijcheckStatus: 'SUCCESS',
                 reactionStatus: {
+                  status: 'SUCCESS',
                   success: true,
                   emoji: emojiToReact,
                   latencyMs,
@@ -547,15 +825,16 @@ class SlackService {
               currentShifts = saveShiftBlock(currentShifts, targetIsoDate, bId, updatedShift);
               this.saveShifts(currentShifts);
 
-              // Notify listeners
-              this.reactionListeners.forEach(cb => cb({
-                reactionSuccess: true,
-                emoji: emojiToReact,
-                latencyMs,
-                shift: updatedShift,
-                date: targetIsoDate,
-                blockId: bId
-              }));
+              this.reactionListeners.forEach((cb) =>
+                cb({
+                  reactionSuccess: true,
+                  emoji: emojiToReact,
+                  latencyMs,
+                  shift: updatedShift,
+                  date: targetIsoDate,
+                  blockId: bId
+                })
+              );
             }
           }
         }
@@ -566,8 +845,7 @@ class SlackService {
         }
       }
 
-      // If message is older than 1 hour, ignore it in future polls
-      const msgAgeSec = (Date.now() / 1000) - parseFloat(msg.ts || 0);
+      const msgAgeSec = Date.now() / 1000 - parseFloat(msg.ts || 0);
       if (msgAgeSec > 3600) {
         this.processedMessageIds.add(msg.ts);
       }
@@ -579,31 +857,52 @@ class SlackService {
       const raw = appStorage.getItem('vrijcheck_settings');
       if (raw) {
         const parsed = JSON.parse(raw);
-        // Automatically default to production VPS if unset or legacy localhost
         if (!parsed.serverUrl || parsed.serverUrl.includes('localhost')) {
           parsed.serverUrl = DEFAULT_PROD_SERVER_URL;
         }
         if (!parsed.serverToken || parsed.serverToken === 'vrijcheck_secret_2026') {
           parsed.serverToken = DEFAULT_PROD_SERVER_TOKEN;
         }
-        return { ...DEFAULT_SETTINGS, ...parsed };
+        return {
+          ...DEFAULT_SETTINGS,
+          ...parsed,
+          emojiMapping: {
+            ...DEFAULT_EMOJI_MAPPING,
+            ...(parsed.emojiMapping || {})
+          }
+        };
       }
-    } catch (e) {}
+    } catch (_) {}
     return { ...DEFAULT_SETTINGS };
   }
 
   saveSettings(newSettings) {
     const current = this.getSettings();
-    const merged = { ...current, ...newSettings };
+    const merged = {
+      ...current,
+      ...newSettings,
+      emojiMapping: {
+        ...DEFAULT_EMOJI_MAPPING,
+        ...(current.emojiMapping || {}),
+        ...(newSettings?.emojiMapping || {})
+      }
+    };
+
+    if (merged.serverMode === 'OTHER' && merged.customServerHost) {
+      merged.serverUrl = this.getActiveServerUrl(merged);
+    } else if (merged.serverMode === 'DEFAULT') {
+      merged.serverUrl = DEFAULT_PROD_SERVER_URL;
+    }
+
     merged.userId = this.getUserId();
     if (this.cachedAuth?.user) {
       merged.username = this.cachedAuth.user;
     }
     try {
       appStorage.setItem('vrijcheck_settings', JSON.stringify(merged));
-    } catch (e) {}
+    } catch (_) {}
 
-    const serverUrl = (merged.serverUrl || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const serverUrl = this.getActiveServerUrl(merged);
     const serverToken = merged.serverToken || DEFAULT_PROD_SERVER_TOKEN;
 
     const headers = {
@@ -635,25 +934,30 @@ class SlackService {
       const raw = appStorage.getItem('vrijcheck_shifts');
       if (raw) {
         const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+        if (parsed && typeof parsed === 'object') {
           return parsed;
         }
       }
-    } catch (e) {}
+    } catch (_) {}
     return DEFAULT_SHIFTS;
+  }
+
+  saveShiftsLocalOnly(shifts) {
+    if (!shifts || typeof shifts !== 'object') return;
+    try {
+      appStorage.setItem('vrijcheck_shifts', JSON.stringify(shifts));
+    } catch (_) {}
   }
 
   saveShifts(shifts) {
     if (!shifts || typeof shifts !== 'object') return;
-    try {
-      appStorage.setItem('vrijcheck_shifts', JSON.stringify(shifts));
-    } catch (e) {}
+    this.saveShiftsLocalOnly(shifts);
 
     const settings = this.getSettings();
-    const serverUrl = (settings.serverUrl || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const serverUrl = this.getActiveServerUrl(settings);
     const serverToken = settings.serverToken || DEFAULT_PROD_SERVER_TOKEN;
 
-    const headers = { 
+    const headers = {
       'Content-Type': 'application/json',
       'x-api-key': serverToken,
       'x-user-id': this.getUserId()
@@ -664,64 +968,42 @@ class SlackService {
         url: `${serverUrl}/api/shifts/bulk`,
         headers,
         data: { shifts, userId: this.getUserId() }
-      }).catch((err) => console.warn('[SAVE SHIFTS] Native HTTP error:', err));
+      }).catch(() => {});
     } else {
       fetch(`${serverUrl}/api/shifts/bulk`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ shifts, userId: this.getUserId() })
-      }).catch((err) => console.warn('[SAVE SHIFTS] Web fetch error:', err));
+      }).catch(() => {});
     }
   }
 
-  /**
-   * Test connection to the 24/7 Vrijcheck Webserver using the Server Auth Token
-   */
   async testServerConnection(url, token) {
-    const cleanUrl = (url || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const cleanUrl = (url || this.getActiveServerUrl()).replace(/\/+$/, '');
     const cleanToken = (token || DEFAULT_PROD_SERVER_TOKEN).trim();
 
     try {
-      if (Capacitor.isNativePlatform()) {
-        const res = await CapacitorHttp.post({
-          url: `${cleanUrl}/api/auth/verify`,
-          headers: { 
-            'Content-Type': 'application/json',
-            'x-api-key': cleanToken,
-            'x-user-id': this.getUserId()
-          },
-          data: { token: cleanToken, userId: this.getUserId() }
-        });
-        if (res?.data?.ok) {
-          return { ok: true, message: 'Verbonden met 24/7 Multi-User webserver!' };
-        }
-        return { ok: false, error: res?.data?.error || 'Ongeldig server token of server onbereikbaar' };
-      } else {
-        const res = await fetch(`${cleanUrl}/api/auth/verify`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'x-api-key': cleanToken,
-            'x-user-id': this.getUserId()
-          },
-          body: JSON.stringify({ token: cleanToken, userId: this.getUserId() })
-        });
-        const data = await res.json();
-        if (res.ok && data.ok) {
-          return { ok: true, message: 'Verbonden met 24/7 Multi-User webserver!' };
-        }
-        return { ok: false, error: data.error || 'Server authenticatie geweigerd' };
+      const data = await this._httpJson(`${cleanUrl}/api/auth/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': cleanToken,
+          'x-user-id': this.getUserId()
+        },
+        body: { token: cleanToken, userId: this.getUserId() },
+        timeout: 4500
+      });
+      if (data?.ok) {
+        return { ok: true, message: 'Verbonden met 24/7 Multi-User webserver!' };
       }
+      return { ok: false, error: data?.error || 'Ongeldig server token of server onbereikbaar' };
     } catch (err) {
       return { ok: false, error: `Kon geen verbinding maken met ${cleanUrl}: ${err.message}` };
     }
   }
 
-  /**
-   * Trigger Day-Planning-Sender emulation on the 24/7 server to benchmark latency
-   */
   async emulateOnServer(url, token, options = {}) {
-    const cleanUrl = (url || DEFAULT_PROD_SERVER_URL).replace(/\/+$/, '');
+    const cleanUrl = (url || this.getActiveServerUrl()).replace(/\/+$/, '');
     const cleanToken = (token || DEFAULT_PROD_SERVER_TOKEN).trim();
 
     const payload = {
@@ -733,27 +1015,15 @@ class SlackService {
     };
 
     try {
-      if (Capacitor.isNativePlatform()) {
-        const res = await CapacitorHttp.post({
-          url: `${cleanUrl}/api/test/emulate-planner`,
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': cleanToken
-          },
-          data: payload
-        });
-        return res.data;
-      } else {
-        const res = await fetch(`${cleanUrl}/api/test/emulate-planner`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': cleanToken
-          },
-          body: JSON.stringify(payload)
-        });
-        return await res.json();
-      }
+      return await this._httpJson(`${cleanUrl}/api/test/emulate-planner`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': cleanToken,
+          'x-user-id': this.getUserId()
+        },
+        body: payload
+      });
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -775,29 +1045,47 @@ class SlackService {
   onStatusChange(cb) {
     this.statusListeners.push(cb);
     return () => {
-      this.statusListeners = this.statusListeners.filter(l => l !== cb);
+      this.statusListeners = this.statusListeners.filter((l) => l !== cb);
     };
   }
 
-  logout() {
+  /**
+   * Hard Session Wipe on Logout (Section 5):
+   * Wipes all native WebView cookies (Slack + Picnic Keycloak SSO), WebStorage, cache,
+   * and clears local credentials so the user must re-enter Keycloak email & password on next login.
+   */
+  async logout() {
     this.stopPolling();
     this.cachedAuth = null;
     this.recentMessages = [];
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await SlackAuth.logout();
+      } catch (err) {
+        console.warn('Native SlackAuth.logout warning:', err);
+      }
+    }
+
     const cleared = {
-      ...this.getSettings(),
+      ...DEFAULT_SETTINGS,
       slackToken: '',
-      slackCookie: ''
+      slackCookie: '',
+      onboardingCompleted: false
     };
     try {
-      localStorage.setItem('vrijcheck_settings', JSON.stringify(cleared));
-    } catch (e) {}
+      appStorage.setItem('vrijcheck_settings', JSON.stringify(cleared));
+      appStorage.removeItem('vrijcheck_shifts');
+      appStorage.removeItem('vrijcheck_requests');
+      appStorage.removeItem('vrijcheck_user_id');
+    } catch (_) {}
     this.emitStatus();
     return cleared;
   }
 
   emitStatus() {
     const st = this.getStatus();
-    this.statusListeners.forEach(cb => cb(st));
+    this.statusListeners.forEach((cb) => cb(st));
   }
 }
 

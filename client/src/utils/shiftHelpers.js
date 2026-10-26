@@ -1,6 +1,6 @@
 import { SHIFT_BLOCKS, getBlockInfo } from './constants';
 
-export const ALL_BLOCK_IDS = ['M1', 'M2', 'S1', 'S2', 'S3'];
+export const ALL_BLOCK_IDS = ['M1', 'M2', 'M3', 'M4', 'S1', 'S2', 'S3', 'S4'];
 export const DAY_NAMES_2 = ['ZO', 'MA', 'DI', 'WO', 'DO', 'VR', 'ZA'];
 
 export function formatDay2Letters(date) {
@@ -8,10 +8,6 @@ export function formatDay2Letters(date) {
   return DAY_NAMES_2[date.getDay()];
 }
 
-/**
- * Returns the shift configuration for a specific block on a date.
- * Default: vrijcheckActive is FALSE (the user must explicitly opt in).
- */
 export function getShiftForBlock(shiftsData, dateKey, blockId) {
   const dayData = shiftsData?.[dateKey];
   const blockDef = getBlockInfo(blockId);
@@ -21,42 +17,48 @@ export function getShiftForBlock(shiftsData, dateKey, blockId) {
     block: blockId,
     startTime: defaultTimes[0],
     endTime: defaultTimes[1],
+    scheduled: false,
     vrijcheckActive: false,
+    vrijcheckStatus: null,
     reactionStatus: null
   };
 
   if (!dayData) return base;
 
-  // Stored as dictionary by block ID: dayData[blockId]
   if (dayData[blockId]) {
+    const raw = dayData[blockId];
     return {
       ...base,
-      ...dayData[blockId],
+      ...raw,
       block: blockId,
-      vrijcheckActive: Boolean(dayData[blockId].vrijcheckActive)
+      scheduled: raw.scheduled !== undefined ? Boolean(raw.scheduled) : true,
+      vrijcheckActive: Boolean(raw.vrijcheckActive),
+      vrijcheckStatus: raw.vrijcheckStatus || (raw.vrijcheckActive ? 'STANDBY' : null)
     };
   }
 
-  // Stored as array
   if (Array.isArray(dayData)) {
-    const found = dayData.find(s => s && s.block === blockId);
+    const found = dayData.find((s) => s && s.block === blockId);
     if (found) {
       return {
         ...base,
         ...found,
         block: blockId,
-        vrijcheckActive: Boolean(found.vrijcheckActive)
+        scheduled: true,
+        vrijcheckActive: Boolean(found.vrijcheckActive),
+        vrijcheckStatus: found.vrijcheckStatus || (found.vrijcheckActive ? 'STANDBY' : null)
       };
     }
   }
 
-  // Stored as single object with block === blockId
   if (dayData.block === blockId) {
     return {
       ...base,
       ...dayData,
       block: blockId,
-      vrijcheckActive: Boolean(dayData.vrijcheckActive)
+      scheduled: true,
+      vrijcheckActive: Boolean(dayData.vrijcheckActive),
+      vrijcheckStatus: dayData.vrijcheckStatus || (dayData.vrijcheckActive ? 'STANDBY' : null)
     };
   }
 
@@ -64,31 +66,47 @@ export function getShiftForBlock(shiftsData, dateKey, blockId) {
 }
 
 /**
- * Returns all 5 shift blocks for a specific day: M1, M2, S1, S2, S3
+ * Returns ONLY the shifts that the runner is actually scheduled for on a given day
+ * (from iCal `scheduled_shifts` or active `vrijcheck_requests`).
  */
-export function getDayBlocks(shiftsData, dateKey) {
-  return ALL_BLOCK_IDS.map(blockId => getShiftForBlock(shiftsData, dateKey, blockId));
+export function getScheduledDayBlocks(shiftsData, dateKey) {
+  const dayData = shiftsData?.[dateKey];
+  if (!dayData || typeof dayData !== 'object') return [];
+
+  const blocks = [];
+  for (const blockDef of SHIFT_BLOCKS) {
+    if (dayData[blockDef.id]) {
+      const shift = getShiftForBlock(shiftsData, dateKey, blockDef.id);
+      if (shift.scheduled || shift.vrijcheckActive || shift.reactionStatus) {
+        blocks.push({ blockDef, shift });
+      }
+    }
+  }
+  return blocks;
 }
 
-/**
- * Saves or updates a shift block in dictionary format for a given date
- */
+export function getDayBlocks(shiftsData, dateKey) {
+  return ALL_BLOCK_IDS.map((blockId) => getShiftForBlock(shiftsData, dateKey, blockId));
+}
+
 export function saveShiftBlock(shiftsData, dateKey, blockId, updatedFields) {
   const currentDay = shiftsData?.[dateKey];
-  let newDayDict = {};
+  const newDayDict =
+    currentDay && typeof currentDay === 'object' && !Array.isArray(currentDay)
+      ? { ...currentDay }
+      : {};
 
-  if (currentDay && typeof currentDay === 'object' && !Array.isArray(currentDay)) {
-    newDayDict = { ...currentDay };
-  } else {
-    ALL_BLOCK_IDS.forEach(bId => {
-      newDayDict[bId] = getShiftForBlock(shiftsData, dateKey, bId);
-    });
-  }
+  const existing = getShiftForBlock(shiftsData, dateKey, blockId);
+  const nextActive =
+    updatedFields.vrijcheckActive !== undefined ? Boolean(updatedFields.vrijcheckActive) : existing.vrijcheckActive;
 
   newDayDict[blockId] = {
-    ...getShiftForBlock(shiftsData, dateKey, blockId),
+    ...existing,
     ...updatedFields,
-    block: blockId
+    block: blockId,
+    scheduled: true,
+    vrijcheckActive: nextActive,
+    vrijcheckStatus: nextActive ? (updatedFields.vrijcheckStatus || existing.vrijcheckStatus || 'STANDBY') : null
   };
 
   return {
@@ -97,11 +115,12 @@ export function saveShiftBlock(shiftsData, dateKey, blockId, updatedFields) {
   };
 }
 
-/**
- * Quick toggle for a shift block's Vrijcheck status
- */
 export function toggleVrijcheckForBlock(shiftsData, dateKey, blockId) {
   const current = getShiftForBlock(shiftsData, dateKey, blockId);
   const nextActive = !current.vrijcheckActive;
-  return saveShiftBlock(shiftsData, dateKey, blockId, { vrijcheckActive: nextActive });
+  return saveShiftBlock(shiftsData, dateKey, blockId, {
+    vrijcheckActive: nextActive,
+    vrijcheckStatus: nextActive ? 'STANDBY' : null,
+    reactionStatus: nextActive ? current.reactionStatus : null
+  });
 }

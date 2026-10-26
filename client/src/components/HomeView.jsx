@@ -1,21 +1,15 @@
 import React, { useState } from 'react';
-import { format, parseISO, isToday, isTomorrow, addDays } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { nl } from 'date-fns/locale';
-import { 
-  Calendar, 
-  ChevronRight, 
-  CheckCircle2, 
-  AlertCircle, 
-  Clock, 
-  Zap, 
-  Server,
+import {
+  Calendar,
+  CheckCircle2,
+  Zap,
   RefreshCw,
   Check,
-  XCircle,
-  HelpCircle,
-  Activity
+  XCircle
 } from 'lucide-react';
-import { SHIFT_BLOCKS } from '../utils/constants';
+import { SHIFT_BLOCKS, extractFirstName } from '../utils/constants';
 import { getShiftForBlock } from '../utils/shiftHelpers';
 import { SlackEmoji } from './SlackEmoji';
 import { TeamworkMascot } from './TeamworkMascot';
@@ -26,57 +20,99 @@ export const HomeView = ({
   vpsStatus,
   onRefreshVps,
   shifts = {},
-  history = [],
-  currentDate,
-  onTestReaction,
+  vrijcheckRequests = [],
   settings
 }) => {
-  const [historyFilter, setHistoryFilter] = useState('all'); // 'all' | 'success' | 'failed'
+  const [statusFilter, setStatusFilter] = useState('ALL'); // 'ALL' | 'STANDBY' | 'SUCCESS' | 'FAILED'
   const [isPinging, setIsPinging] = useState(false);
 
-  // Extract display name & first name for greeting
-  const rawUsername = settings?.username || botStatus?.authInfo?.user || 'Jay Verrijt';
+  // Bugfix #2: Dynamic first name extraction from Slack Display Name / Real Name, fallback "Runner"
   const slackProfile = botStatus?.authInfo?.profile || {};
-  let firstName = settings?.firstName || slackProfile.firstName || (settings?.realName ? settings.realName.split(' ')[0] : null);
-  if (!firstName) {
-    if (settings?.displayName) {
-      firstName = settings.displayName.split(' ')[0];
-    } else if (rawUsername.toLowerCase().includes('jay')) {
-      firstName = 'Jay';
-    } else {
-      const cleanName = rawUsername.replace(/[0-9_-]/g, ' ').trim();
-      firstName = cleanName.charAt(0).toUpperCase() + cleanName.slice(1).split(' ')[0] || 'Jay';
-    }
-  }
+  const firstName =
+    settings?.firstName && settings.firstName !== 'Runner'
+      ? settings.firstName.split(/\s+/)[0]
+      : extractFirstName(
+          settings?.displayName || slackProfile.displayName,
+          settings?.realName || slackProfile.realName,
+          'Runner'
+        );
 
-  // Find all shifts that have either vrijcheckActive === true or reactionStatus !== null
   const now = new Date();
   const todayKey = format(now, 'yyyy-MM-dd');
-  const tomorrowKey = format(addDays(now, 1), 'yyyy-MM-dd');
 
-  // Collect active/reacted shifts grouped by dateKey
-  const groupedShifts = {};
+  // Build unified list of ONLY explicitly requested vrijchecks (STANDBY, SUCCESS, FAILED)
+  // Bugfix #1 & #4: Never show unrequested shifts or fake failures!
+  const requestedMap = new Map();
 
-  // 1. Scan shifts for today, tomorrow, and future days
-  const allDateKeys = Object.keys(shifts).sort();
-  for (const dateKey of allDateKeys) {
-    const dayData = shifts[dateKey];
-    if (!dayData) continue;
-
-    const matchedBlocks = SHIFT_BLOCKS
-      .map(b => getShiftForBlock(shifts, dateKey, b.id))
-      .filter(s => s && (s.vrijcheckActive === true || s.reactionStatus));
-
-    if (matchedBlocks.length > 0) {
-      groupedShifts[dateKey] = matchedBlocks;
+  if (Array.isArray(vrijcheckRequests)) {
+    for (const r of vrijcheckRequests) {
+      if (!r || !r.shiftDate || !r.shiftBlock) continue;
+      if (!['STANDBY', 'SUCCESS', 'FAILED'].includes(r.status)) continue;
+      const key = `${r.shiftDate}#${r.shiftBlock}`;
+      requestedMap.set(key, {
+        shiftDate: r.shiftDate,
+        shiftBlock: r.shiftBlock,
+        startTime: r.startTime || '14:00',
+        endTime: r.endTime || '16:45',
+        status: r.status,
+        emoji: (r.reactionEmoji || r.reaction_emoji || '1-red').replace(/^:+|:+$/g, ''),
+        latencyMs: r.latency_ms ?? r.latencyMs ?? null,
+        errorMessage: r.error_message || r.errorMessage || null,
+        reactedAt: r.reacted_at || r.reactedAt || null
+      });
     }
   }
 
-  // Group into "vandaag" and "komend"
-  const todayShifts = groupedShifts[todayKey] || [];
-  const upcomingDateKeys = Object.keys(groupedShifts).filter(d => d > todayKey);
+  for (const dateKey of Object.keys(shifts).sort()) {
+    const dayData = shifts[dateKey];
+    if (!dayData) continue;
+    for (const b of SHIFT_BLOCKS) {
+      const s = getShiftForBlock(shifts, dateKey, b.id);
+      if (s && s.vrijcheckActive === true) {
+        const key = `${dateKey}#${b.id}`;
+        if (!requestedMap.has(key)) {
+          let st = s.vrijcheckStatus || 'STANDBY';
+          if (s.reactionStatus) {
+            st = s.reactionStatus.success ? 'SUCCESS' : 'FAILED';
+          }
+          requestedMap.set(key, {
+            shiftDate: dateKey,
+            shiftBlock: b.id,
+            startTime: s.startTime || b.defaultTime.split(' - ')[0],
+            endTime: s.endTime || b.defaultTime.split(' - ')[1],
+            status: st,
+            emoji: s.reactionStatus?.emoji || b.emoji || '1-red',
+            latencyMs: s.reactionStatus?.latencyMs || null,
+            errorMessage: s.reactionStatus?.error || null,
+            reactedAt: s.reactionStatus?.timestamp || null
+          });
+        }
+      }
+    }
+  }
 
-  // VPS status helper
+  const allRequested = Array.from(requestedMap.values()).sort((a, b) => {
+    if (a.shiftDate !== b.shiftDate) return a.shiftDate.localeCompare(b.shiftDate);
+    return a.shiftBlock.localeCompare(b.shiftBlock);
+  });
+
+  // Group requested shifts by date for Today & Upcoming cards
+  const groupedByDate = {};
+  for (const req of allRequested) {
+    if (!groupedByDate[req.shiftDate]) groupedByDate[req.shiftDate] = [];
+    groupedByDate[req.shiftDate].push(req);
+  }
+
+  const todayRequested = groupedByDate[todayKey] || [];
+  const upcomingDateKeys = Object.keys(groupedByDate)
+    .filter((d) => d > todayKey)
+    .sort();
+
+  const filteredRequests = allRequested.filter((item) => {
+    if (statusFilter === 'ALL') return true;
+    return item.status === statusFilter;
+  });
+
   const isVpsOnline = vpsStatus?.isConnected;
 
   const handlePing = async () => {
@@ -89,28 +125,44 @@ export const HomeView = ({
     }
   };
 
-  // Filter history for "Wat echt vrijgecheckt is"
-  const filteredHistory = history.filter(item => {
-    if (historyFilter === 'success') {
-      return item.reactionSuccess === true || item.status === 'success';
+  const renderStatusBadge = (req) => {
+    if (req.status === 'SUCCESS') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold text-[11px]">
+          <SlackEmoji name={req.emoji} size="xs" />
+          <span>✓ {req.latencyMs ? `${req.latencyMs}ms` : 'Geplaatst'}</span>
+        </span>
+      );
     }
-    if (historyFilter === 'failed') {
-      return item.reactionSuccess === false && item.status !== 'success';
+    if (req.status === 'FAILED') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/20 border border-red-500/40 text-red-300 font-bold text-[11px]">
+          <XCircle className="w-3 h-3 text-red-400" />
+          <span>Mislukt</span>
+        </span>
+      );
     }
-    return true;
-  });
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/20 border border-blue-500/40 text-blue-300 font-bold text-[11px]">
+        <Zap className="w-3 h-3 fill-current text-blue-400" />
+        <span>Standby</span>
+      </span>
+    );
+  };
 
   return (
     <div className="w-full max-w-md mx-auto px-4 py-2 space-y-4 pb-28 select-none animate-fadeIn">
-      {/* 1. TOP HERO: Hi, Jay 👋 with Cool Mascot (Matches Screenshot 1) */}
+      {/* 1. TOP HERO: Dynamic Greeting Hi, <Voornaam> */}
       <div className="flex flex-col items-center justify-center text-center pt-1 pb-2">
         <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
           <span>Hi, {firstName}</span>
           <span className="text-2xl">👋</span>
         </h1>
 
-        {/* Picnic Superhero Avocado Mascot with Shades (matches Screenshot 1) */}
-        <div className="mt-2.5 mb-1.5 transform hover:scale-105 transition-transform cursor-pointer" onClick={handlePing}>
+        <div
+          className="mt-2.5 mb-1.5 transform hover:scale-105 transition-transform cursor-pointer"
+          onClick={handlePing}
+        >
           <TeamworkMascot className="w-16 h-16" />
         </div>
 
@@ -130,11 +182,10 @@ export const HomeView = ({
         </div>
       </div>
 
-      {/* 2. SHIFTS VANDAAG (Exact Teamwork Card Style from Screenshot 1) */}
-      {todayShifts.length > 0 && (
+      {/* 2. AANGEVRAAGDE SHIFTS VANDAAG */}
+      {todayRequested.length > 0 && (
         <div className="bg-[#14151e] border border-[#232533] rounded-2xl p-4 shadow-sm">
           <div className="flex items-center gap-3.5">
-            {/* Left Date Box: Grey rounded pill (Sat 24) */}
             <div className="w-14 h-16 rounded-2xl bg-[#323440] flex flex-col items-center justify-center shrink-0 border border-white/5 shadow-inner">
               <span className="text-[11px] font-bold text-neutral-300 uppercase tracking-wider">
                 {format(now, 'EEE', { locale: nl }).replace('.', '')}
@@ -144,68 +195,44 @@ export const HomeView = ({
               </span>
             </div>
 
-            {/* Right Side: Header in blue + Shifts with badges */}
             <div className="flex-1 min-w-0">
               <div className="text-xs font-bold text-[#3b82f6] mb-2 uppercase tracking-wide">
-                Shifts vandaag
+                Aangevraagde shifts vandaag
               </div>
 
               <div className="space-y-2">
-                {todayShifts.map((shift) => {
-                  const hasReacted = shift.reactionStatus?.success;
-                  const emoji = shift.reactionStatus?.emoji || (shift.block?.includes('3') ? '3-red' : shift.block?.includes('2') ? '2-red' : '1-red');
-                  const latency = shift.reactionStatus?.latencyMs;
-
-                  return (
-                    <div key={`today-${shift.block}`} className="flex items-center justify-between gap-2">
-                      <div className="text-sm font-bold text-white tracking-tight">
-                        {shift.startTime} - {shift.endTime}
-                      </div>
-
-                      {/* Right Badges matching Teamwork layout */}
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {/* Type Badge: Trip */}
-                        <span className="px-2 py-0.5 rounded-md bg-[#252834] text-neutral-300 font-semibold text-[11px]">
-                          Trip
-                        </span>
-
-                        {/* Shift Block: S1 / M2 */}
-                        <span className="px-2 py-0.5 rounded-md bg-[#252834] text-neutral-300 font-semibold text-[11px]">
-                          {shift.block}
-                        </span>
-
-                        {/* Reaction / Status Badge with Emoji */}
-                        {hasReacted ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold text-[11px]">
-                            <SlackEmoji name={emoji} size="xs" />
-                            <span>✓ {latency ? `${latency}ms` : 'Vrij'}</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/20 border border-blue-500/40 text-blue-300 font-bold text-[11px]">
-                            <Zap className="w-3 h-3 fill-current text-blue-400" />
-                            <span>Standby</span>
-                          </span>
-                        )}
-                      </div>
+                {todayRequested.map((req) => (
+                  <div key={`today-${req.shiftBlock}`} className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-bold text-white tracking-tight">
+                      {req.startTime} - {req.endTime}
                     </div>
-                  );
-                })}
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="px-2 py-0.5 rounded-md bg-[#252834] text-neutral-300 font-semibold text-[11px]">
+                        Trip
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-[#252834] text-neutral-300 font-semibold text-[11px]">
+                        {req.shiftBlock}
+                      </span>
+                      {renderStatusBadge(req)}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* 3. KOMENDE SHIFTS (Exact Teamwork Card Style from Screenshot 1) */}
+      {/* 3. KOMENDE AANGEVRAAGDE SHIFTS */}
       {upcomingDateKeys.length > 0 ? (
-        upcomingDateKeys.slice(0, 3).map((dateKey) => {
+        upcomingDateKeys.map((dateKey) => {
           const shiftDate = parseISO(dateKey);
-          const dateShifts = groupedShifts[dateKey] || [];
+          const dateRequests = groupedByDate[dateKey] || [];
 
           return (
             <div key={dateKey} className="bg-[#14151e] border border-[#232533] rounded-2xl p-4 shadow-sm">
               <div className="flex items-center gap-3.5">
-                {/* Left Date Box: Grey rounded pill (e.g. Mon 26) */}
                 <div className="w-14 h-16 rounded-2xl bg-[#323440] flex flex-col items-center justify-center shrink-0 border border-white/5 shadow-inner">
                   <span className="text-[11px] font-bold text-neutral-300 uppercase tracking-wider">
                     {format(shiftDate, 'EEE', { locale: nl }).replace('.', '')}
@@ -215,58 +242,39 @@ export const HomeView = ({
                   </span>
                 </div>
 
-                {/* Right Side: Header in blue + Shifts with badges */}
                 <div className="flex-1 min-w-0">
                   <div className="text-xs font-bold text-[#3b82f6] mb-2 uppercase tracking-wide">
-                    Komende shifts
+                    Komende aangevraagde shifts
                   </div>
 
                   <div className="space-y-2">
-                    {dateShifts.map((shift) => {
-                      const hasReacted = shift.reactionStatus?.success;
-                      const emoji = shift.reactionStatus?.emoji || (shift.block?.includes('3') ? '3-red' : shift.block?.includes('2') ? '2-red' : '1-red');
-                      const latency = shift.reactionStatus?.latencyMs;
-
-                      return (
-                        <div key={`${dateKey}-${shift.block}`} className="flex items-center justify-between gap-2">
-                          <div className="text-sm font-bold text-white tracking-tight">
-                            {shift.startTime} - {shift.endTime}
-                          </div>
-
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="px-2 py-0.5 rounded-md bg-[#252834] text-neutral-300 font-semibold text-[11px]">
-                              Trip
-                            </span>
-                            <span className="px-2 py-0.5 rounded-md bg-[#252834] text-neutral-300 font-semibold text-[11px]">
-                              {shift.block}
-                            </span>
-
-                            {hasReacted ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold text-[11px]">
-                                <SlackEmoji name={emoji} size="xs" />
-                                <span>✓ {latency ? `${latency}ms` : 'Vrij'}</span>
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/20 border border-blue-500/40 text-blue-300 font-bold text-[11px]">
-                                <Zap className="w-3 h-3 fill-current text-blue-400" />
-                                <span>Standby</span>
-                              </span>
-                            )}
-                          </div>
+                    {dateRequests.map((req) => (
+                      <div key={`${dateKey}-${req.shiftBlock}`} className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-bold text-white tracking-tight">
+                          {req.startTime} - {req.endTime}
                         </div>
-                      );
-                    })}
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="px-2 py-0.5 rounded-md bg-[#252834] text-neutral-300 font-semibold text-[11px]">
+                            Trip
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-[#252834] text-neutral-300 font-semibold text-[11px]">
+                            {req.shiftBlock}
+                          </span>
+                          {renderStatusBadge(req)}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
             </div>
           );
         })
-      ) : todayShifts.length === 0 ? (
-        /* Empty State: Prompt to select shifts */
+      ) : todayRequested.length === 0 ? (
         <div className="bg-[#14151e] border border-[#232533] rounded-2xl p-5 text-center space-y-3">
           <p className="text-xs text-neutral-300 leading-relaxed">
-            Geen actieve vrijchecks ingesteld voor vandaag of de komende dagen.
+            Geen aangevraagde vrijchecks voor vandaag of de komende dagen.
           </p>
           <button
             type="button"
@@ -279,135 +287,100 @@ export const HomeView = ({
         </div>
       ) : null}
 
-      {/* 4. WAT ECHT VRIJGECHECKT IS (Real Slack Reactions & Failure Logs) */}
+      {/* 4. UITSLUITEND AANGEVRAAGDE SHIFTS & 3 STATUSSEN (Standby, Success, Failed) */}
       <div className="bg-[#14151e] border border-[#232533] rounded-2xl p-4 space-y-3 shadow-sm">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-              Vrijcheck Reactie Status
+              Aangevraagde Vrijchecks
             </h3>
           </div>
 
-          {/* Filter Pills */}
+          {/* 3 Status Filter Pills */}
           <div className="flex items-center gap-1 bg-[#1d1f2a] p-0.5 rounded-lg border border-[#292c3d]">
-            <button
-              type="button"
-              onClick={() => setHistoryFilter('all')}
-              className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
-                historyFilter === 'all'
-                  ? 'bg-[#3171f7] text-white'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              Alles
-            </button>
-            <button
-              type="button"
-              onClick={() => setHistoryFilter('success')}
-              className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
-                historyFilter === 'success'
-                  ? 'bg-emerald-600 text-white'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              ✓ Gelukt
-            </button>
-            <button
-              type="button"
-              onClick={() => setHistoryFilter('failed')}
-              className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
-                historyFilter === 'failed'
-                  ? 'bg-red-600 text-white'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              ✖ Mislukt
-            </button>
+            {[
+              { id: 'ALL', label: 'Alles', activeClass: 'bg-[#3171f7] text-white' },
+              { id: 'STANDBY', label: 'Standby', activeClass: 'bg-blue-600 text-white' },
+              { id: 'SUCCESS', label: 'Success', activeClass: 'bg-emerald-600 text-white' },
+              { id: 'FAILED', label: 'Mislukt', activeClass: 'bg-red-600 text-white' }
+            ].map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setStatusFilter(f.id)}
+                className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
+                  statusFilter === f.id ? f.activeClass : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* List of reaction events */}
-        {filteredHistory.length > 0 ? (
+        {filteredRequests.length > 0 ? (
           <div className="divide-y divide-[#1e202b] space-y-0.5">
-            {filteredHistory.slice(0, 6).map((item, idx) => {
-              const isSuccess = item.reactionSuccess === true || item.status === 'success';
-              const emojiName = item.reactionEmoji || item.emoji || (item.matchedShift?.includes('3') ? '3-red' : item.matchedShift?.includes('2') ? '2-red' : '1-red');
-              const latency = item.latencyMs || 0;
-              const dateLabel = item.messageDate || format(new Date(), 'dd-MM-yyyy');
-              const shiftCode = item.matchedShift || item.period || 'Shift';
+            {filteredRequests.map((req) => {
+              const isSuccess = req.status === 'SUCCESS';
+              const isFailed = req.status === 'FAILED';
 
               return (
-                <div key={item.messageTs || idx} className="py-2.5 flex items-center justify-between gap-3">
+                <div
+                  key={`${req.shiftDate}-${req.shiftBlock}`}
+                  className="py-2.5 flex items-center justify-between gap-3"
+                >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-xs font-bold text-white">
-                        {dateLabel} • {shiftCode}
+                        {req.shiftDate} &bull; {req.shiftBlock}
                       </span>
-                      {item.period && (
-                        <span className="text-[10px] text-neutral-400 font-mono">
-                          ({item.period})
-                        </span>
-                      )}
+                      <span className="text-[10px] text-neutral-400 font-mono">
+                        ({req.startTime} - {req.endTime})
+                      </span>
                     </div>
 
                     <div className="flex items-center gap-1.5 text-[11px] mt-0.5">
                       {isSuccess ? (
                         <span className="text-emerald-400 font-medium flex items-center gap-1">
                           <Check className="w-3 h-3 stroke-[3]" />
-                          <span>Gereageerd met :{emojiName}:</span>
+                          <span>Reactie succesvol geplaatst (:{req.emoji}:)</span>
                         </span>
-                      ) : (
+                      ) : isFailed ? (
                         <span className="text-red-400 font-medium flex items-center gap-1 truncate">
                           <XCircle className="w-3 h-3 stroke-[2.5] shrink-0" />
-                          <span className="truncate">{item.reason || item.error || 'Niet gereageerd'}</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Right: Emoji Icon & Latency / Status */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    {isSuccess && (
-                      <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
-                        <SlackEmoji name={emojiName} size="sm" />
-                      </div>
-                    )}
-
-                    <div className="text-right">
-                      {isSuccess ? (
-                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-bold border border-emerald-500/30">
-                          {latency}ms
+                          <span className="truncate">
+                            {req.errorMessage || 'Technische fout bij plaatsen van reactie'}
+                          </span>
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded-md bg-red-500/20 text-red-300 text-[10px] font-bold border border-red-500/30">
-                          Mislukt
+                        <span className="text-blue-300 font-medium flex items-center gap-1">
+                          <Zap className="w-3 h-3 fill-current text-blue-400" />
+                          <span>
+                            Standby &bull; wacht op vrijcheck-moment (
+                            {req.shiftBlock.startsWith('M') ? '17:10' : '10:10'})
+                          </span>
                         </span>
                       )}
                     </div>
                   </div>
+
+                  <div className="shrink-0">{renderStatusBadge(req)}</div>
                 </div>
               );
             })}
           </div>
         ) : (
           <div className="py-3 text-center text-xs text-neutral-400">
-            {historyFilter === 'failed'
-              ? 'Geen mislukte vrijchecks gevonden. Alles verloopt vlekkeloos!'
-              : 'Nog geen Slack vrijchecks geregistreerd.'}
+            {statusFilter === 'FAILED'
+              ? 'Geen mislukte vrijchecks gevonden.'
+              : 'Nog geen vrijchecks aangevraagd in deze weergave.'}
           </div>
         )}
 
-        <div className="pt-1 border-t border-[#1e202b] flex items-center justify-between text-[11px] text-neutral-400">
-          <span>Centrale Slack luisteraar: <strong>#nl-dist-runners-hlm</strong></span>
-          <button
-            type="button"
-            onClick={() => onNavigate('live')}
-            className="text-[#3b82f6] hover:underline font-bold flex items-center gap-0.5"
-          >
-            <span>Live Monitor</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
+        <div className="pt-1.5 border-t border-[#1e202b] text-[10px] text-neutral-400 leading-relaxed">
+          Kanaal: <strong className="text-neutral-200">{settings?.channelName || '#nl-dist-runners-hlm'}</strong> &bull;
+          De bot plaatst sub-seconde je emoji-reactie op Slack; wie het eerst reageert krijgt vrij van Picnic.
         </div>
       </div>
     </div>

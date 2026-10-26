@@ -41,7 +41,8 @@ public class SlackAuthPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationDelegate 
     public let identifier = "SlackAuthPlugin"
     public let jsName = "SlackAuth"
     public let pluginMethods: [CAPPluginMethod] = [
-        CAPPluginMethod(name: "login", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "login", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "logout", returnType: CAPPluginReturnPromise)
     ]
 
     private var activeCall: CAPPluginCall?
@@ -62,6 +63,30 @@ public class SlackAuthPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationDelegate 
             guard let self = self else { return }
             let startUrl = call.getString("workspaceUrl") ?? "https://picnic.enterprise.slack.com"
             self.presentLoginModal(startUrl: startUrl)
+        }
+    }
+
+    @objc func logout(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            if let cookies = HTTPCookieStorage.shared.cookies {
+                for cookie in cookies {
+                    HTTPCookieStorage.shared.deleteCookie(cookie)
+                }
+            }
+            URLCache.shared.removeAllCachedResponses()
+
+            let dataStore = WKWebsiteDataStore.default()
+            dataStore.httpCookieStore.getAllCookies { cookies in
+                for cookie in cookies {
+                    dataStore.httpCookieStore.delete(cookie, completionHandler: nil)
+                }
+            }
+            dataStore.removeData(
+                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                modifiedSince: Date(timeIntervalSince1970: 0)
+            ) {
+                call.resolve(["ok": true])
+            }
         }
     }
 

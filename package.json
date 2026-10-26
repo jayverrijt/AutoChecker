@@ -1,6 +1,6 @@
 {
   "name": "vrijcheck-app",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "description": "Picnic Teamwork Vrijcheck App & Slack Bot for #nl-dist-runners-hlm",
   "scripts": {

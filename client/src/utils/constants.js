@@ -1,3 +1,5 @@
+export const APP_VERSION = '2.0.0';
+
 export const SHIFT_BLOCKS = [
   {
     id: 'M1',
@@ -19,6 +21,30 @@ export const SHIFT_BLOCKS = [
     emoji: '2-red',
     color: 'blue',
     description: 'Ochtend Shift 2 (09:15 - 12:00)',
+    postTime: '17:10',
+    timingLabel: '17:10 (dag van tevoren)',
+    timingNote: 'Day-Planning-Sender stuurt het bericht om 17:10 (de dag van tevoren).'
+  },
+  {
+    id: 'M3',
+    label: 'M3',
+    period: 'OCHTEND',
+    defaultTime: '10:00 - 12:45',
+    emoji: '3-red',
+    color: 'blue',
+    description: 'Ochtend Shift 3 (10:00 - 12:45)',
+    postTime: '17:10',
+    timingLabel: '17:10 (dag van tevoren)',
+    timingNote: 'Day-Planning-Sender stuurt het bericht om 17:10 (de dag van tevoren).'
+  },
+  {
+    id: 'M4',
+    label: 'M4',
+    period: 'OCHTEND',
+    defaultTime: '11:00 - 13:45',
+    emoji: '4-red',
+    color: 'blue',
+    description: 'Ochtend Shift 4 (11:00 - 13:45)',
     postTime: '17:10',
     timingLabel: '17:10 (dag van tevoren)',
     timingNote: 'Day-Planning-Sender stuurt het bericht om 17:10 (de dag van tevoren).'
@@ -54,7 +80,19 @@ export const SHIFT_BLOCKS = [
     defaultTime: '19:30 - 22:15',
     emoji: '3-red',
     color: 'blue',
-    description: 'Middag Shift 3 (19:30 - 22:15)',
+    description: 'Avond Shift 3 (19:30 - 22:15)',
+    postTime: '10:10',
+    timingLabel: '10:10 (dezelfde dag)',
+    timingNote: 'Day-Planning-Sender stuurt het bericht om 10:10 (dezelfde dag).'
+  },
+  {
+    id: 'S4',
+    label: 'S4',
+    period: 'MIDDAG',
+    defaultTime: '20:00 - 22:30',
+    emoji: '4-red',
+    color: 'blue',
+    description: 'Avond Shift 4 (20:00 - 22:30)',
     postTime: '10:10',
     timingLabel: '10:10 (dezelfde dag)',
     timingNote: 'Day-Planning-Sender stuurt het bericht om 10:10 (dezelfde dag).'
@@ -70,7 +108,6 @@ export function getBlockInfo(blockId) {
   if (!blockId || blockId === 'none') return null;
   if (SHIFT_BLOCK_MAP[blockId]) return SHIFT_BLOCK_MAP[blockId];
 
-  // Compound block e.g. 'S1-S2-S3'
   if (blockId.includes('S')) {
     return {
       id: blockId,
@@ -115,34 +152,61 @@ export function getBlockInfo(blockId) {
 }
 
 /**
- * Checks if current time is within the critical listening window:
- * Morning shifts: 17:09:40 to 17:11:59 (Day-Planner-Sender post seconden variëren, bijv. 17:10:19, 17:10:28)
- * Afternoon shifts: 10:09:40 to 10:11:59 (Day-Planner-Sender post seconden variëren, bijv. 10:10:28, 10:11:00)
+ * Bugfix #2: Extract first name from Slack profile.display_name (or profile.real_name),
+ * fallback is ALWAYS "Runner" (never hardcoded).
  */
+export function extractFirstName(displayName, realName, fallback = 'Runner') {
+  const candidates = [displayName, realName];
+  for (const raw of candidates) {
+    if (raw && typeof raw === 'string' && raw.trim().length > 0) {
+      const cleaned = raw.trim().replace(/^[0-9_\-\s]+/, '');
+      const firstWord = cleaned.split(/\s+/)[0];
+      if (firstWord && firstWord.length > 0) {
+        return firstWord.charAt(0).toUpperCase() + firstWord.slice(1);
+      }
+    }
+  }
+  return fallback;
+}
+
+/**
+ * Compares two semantic version strings (e.g. '1.0.6' vs '2.0.0').
+ * Returns true if currentVersion is strictly older than requiredVersion.
+ */
+export function isVersionOutdated(currentVersion, requiredVersion) {
+  if (!currentVersion || !requiredVersion) return false;
+  const cleanCur = String(currentVersion).replace(/^v/i, '').trim().split('.').map((n) => parseInt(n, 10) || 0);
+  const cleanReq = String(requiredVersion).replace(/^v/i, '').trim().split('.').map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(cleanCur.length, cleanReq.length);
+  for (let i = 0; i < len; i++) {
+    const c = cleanCur[i] || 0;
+    const r = cleanReq[i] || 0;
+    if (c < r) return true;
+    if (c > r) return false;
+  }
+  return false;
+}
+
 export function isCriticalListeningWindow(now = new Date()) {
   const hours = now.getHours();
   const minutes = now.getMinutes();
   const seconds = now.getSeconds();
 
-  // Window 1: Morning shifts release (17:10)
-  // Check from 17:09:40 through 17:10:00-59 and 17:11:00-59
   if (hours === 17 && (minutes === 10 || minutes === 11 || (minutes === 9 && seconds >= 40))) {
     return {
       active: true,
       period: 'OCHTEND',
       target: '17:10',
-      description: 'Luister-venster 17:10 actief voor ochtendshifts (M1, M2)'
+      description: 'Luister-venster 17:10 actief voor ochtendshifts (M1..M4)'
     };
   }
 
-  // Window 2: Afternoon shifts release (10:10)
-  // Check from 10:09:40 through 10:10:00-59 and 10:11:00-59
   if (hours === 10 && (minutes === 10 || minutes === 11 || (minutes === 9 && seconds >= 40))) {
     return {
       active: true,
       period: 'MIDDAG',
       target: '10:10',
-      description: 'Luister-venster 10:10 actief voor middagshifts (S1, S2, S3)'
+      description: 'Luister-venster 10:10 actief voor middag/avondshifts (S1..S4)'
     };
   }
 
