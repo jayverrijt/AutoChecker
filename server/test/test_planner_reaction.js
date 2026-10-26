@@ -458,3 +458,95 @@ test('12. v2.0 Onboarding Validation (Rejects @teampicnic.com email & extracts f
 
   db.deleteUser('U_TEST_ONBOARD');
 });
+
+test('13. v2.0 Automatic :picnic: Reaction on Working Shifts & Pre-Split iCal VEVENTs', async () => {
+  const apiKey = getServerApiKey();
+  const testDateIso = '2026-10-27';
+  const testDateNl = '27-10-2026';
+  const runnerId = 'U_TEST_PICNIC_WORK';
+
+  // 1. Verify pre-split VEVENTs (2 separate VEVENTs both named "Trip shift S1-S2 at HLM Picnic")
+  // map 1-to-1 to S1 and S2 with exact individual start/end times
+  const preSplitIcal = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'BEGIN:VEVENT',
+    'UID:SH01M5X4F7XCWYE71MF5GS85WBH8',
+    'DTSTART:20261027T130519Z',
+    'DTEND:20261027T153357Z',
+    'SUMMARY:Trip shift S1-S2 at HLM Picnic',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:SH01M5X4F7S1SVQ8NY10GKR75G76',
+    'DTSTART:20261027T155357Z',
+    'DTEND:20261027T181939Z',
+    'SUMMARY:Trip shift S1-S2 at HLM Picnic',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:SH01M5X4F7R11EYTPA357935MGF1',
+    'DTSTART:20261027T183939Z',
+    'DTEND:20261027T204715Z',
+    'SUMMARY:Trip shift S3 at HLM Picnic',
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+
+  const parsedPreSplit = parseIcalContent(preSplitIcal, 'HLM');
+  assert.equal(parsedPreSplit.length, 3);
+  assert.equal(parsedPreSplit[0].shiftBlock, 'S1');
+  assert.equal(parsedPreSplit[0].startTime, '14:05');
+  assert.equal(parsedPreSplit[1].shiftBlock, 'S2');
+  assert.equal(parsedPreSplit[1].startTime, '16:53');
+  assert.equal(parsedPreSplit[2].shiftBlock, 'S3');
+  assert.equal(parsedPreSplit[2].startTime, '19:39');
+
+  // 2. Test automatic :picnic: reaction when autoPicnicReact is enabled (default true)
+  db.saveUser(runnerId, {
+    userId: runnerId,
+    firstName: 'Jay',
+    slackToken: 'xoxc-mock-picnic-runner',
+    autoReact: true,
+    autoPicnicReact: true
+  });
+  await db.syncScheduledShifts(runnerId, parsedPreSplit);
+
+  const resOn = await fetch(`${baseUrl}/api/test/emulate-planner`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey
+    },
+    body: JSON.stringify({
+      period: 'MIDDAG',
+      date: testDateNl,
+      isSimulation: true
+    })
+  });
+  assert.equal(resOn.status, 200);
+  const dataOn = await resOn.json();
+  const runnerResOn = dataOn.emulation.result.runners.find((r) => r.userId === runnerId);
+  assert.ok(runnerResOn);
+  assert.equal(runnerResOn.picnicReacted, true, 'Must automatically react with :picnic: when autoPicnicReact is true');
+  assert.equal(runnerResOn.picnicEmoji, 'picnic');
+  assert.deepEqual(runnerResOn.picnicBlocks, ['S1', 'S2', 'S3']);
+
+  // 3. Test that disabling autoPicnicReact turns off :picnic: reaction
+  db.saveUser(runnerId, { autoPicnicReact: false });
+  const resOff = await fetch(`${baseUrl}/api/test/emulate-planner`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey
+    },
+    body: JSON.stringify({
+      period: 'MIDDAG',
+      date: testDateNl,
+      isSimulation: true
+    })
+  });
+  const dataOff = await resOff.json();
+  const runnerResOff = dataOff.emulation.result.runners.find((r) => r.userId === runnerId);
+  assert.equal(runnerResOff.picnicReacted, false, 'Must NOT react with :picnic: when autoPicnicReact is false');
+
+  db.deleteUser(runnerId);
+});

@@ -50,6 +50,18 @@ export const SlackEmoji = ({ name, size = 'md', className = '' }) => {
     );
   }
 
+  // Custom 4-red emoji: red square with white number 4
+  if (cleanName === '4-red' || cleanName === '4') {
+    return (
+      <span
+        title=":4-red:"
+        className={`inline-flex items-center justify-center bg-red-600 text-white rounded font-black shadow-sm select-none border border-red-500/50 ${sizeClasses[size] || sizeClasses.md} ${className}`}
+      >
+        4
+      </span>
+    );
+  }
+
   // Picnic Logo emoji
   if (cleanName === 'picnic') {
     return (

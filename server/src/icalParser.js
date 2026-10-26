@@ -99,7 +99,7 @@ export function parseIcalContent(rawIcalString, defaultHub = 'HLM') {
   }
 
   const parsedEvents = ical.sync.parseICS(rawIcalString);
-  const scheduledShifts = [];
+  const rawMatchingEvents = [];
 
   for (const key of Object.keys(parsedEvents)) {
     const ev = parsedEvents[key];
@@ -116,43 +116,101 @@ export function parseIcalContent(rawIcalString, defaultHub = 'HLM') {
     const shiftDate = formatAmsterdamDate(startDate);
     if (!shiftDate) continue;
 
-    const { blocks, hub } = parsedSummary;
-    const rawUid = ev.uid || `${shiftDate}-${blocks.join('-')}`;
-
-    // Calculate individual block start/end times when a combined shift is split
-    const totalDurationMs =
-      endDate && !isNaN(endDate.getTime()) && endDate > startDate
-        ? endDate.getTime() - startDate.getTime()
-        : 0;
-
-    blocks.forEach((blockId, idx) => {
-      let startTime = BLOCK_DEFAULT_TIMES[blockId]?.startTime || '14:00';
-      let endTime = BLOCK_DEFAULT_TIMES[blockId]?.endTime || '16:45';
-
-      if (totalDurationMs > 0) {
-        if (blocks.length === 1) {
-          startTime = formatAmsterdamTime(startDate) || startTime;
-          endTime = formatAmsterdamTime(endDate) || endTime;
-        } else {
-          // Divide combined shift interval proportionally across the split blocks
-          const sliceMs = totalDurationMs / blocks.length;
-          const subStart = new Date(startDate.getTime() + sliceMs * idx);
-          const subEnd = new Date(startDate.getTime() + sliceMs * (idx + 1));
-          startTime = formatAmsterdamTime(subStart) || startTime;
-          endTime = formatAmsterdamTime(subEnd) || endTime;
-        }
-      }
-
-      scheduledShifts.push({
-        shiftDate,
-        shiftBlock: blockId,
-        startTime,
-        endTime,
-        locationHub: hub,
-        rawIcalUid: `${rawUid}#${blockId}`,
-        summary
-      });
+    rawMatchingEvents.push({
+      ev,
+      summary,
+      parsedSummary,
+      startDate,
+      endDate,
+      shiftDate
     });
+  }
+
+  // Sort raw events chronologically by start time
+  rawMatchingEvents.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+
+  // Group events by shiftDate + rawBlockStr to handle both:
+  // 1) Pre-split VEVENTs from Picnic (<12h before shift, e.g. 2 separate VEVENTs both named "Trip shift S1-S2")
+  // 2) Single combined VEVENTs (>12h before shift, e.g. 1 VEVENT named "Trip shift S1-S2-S3" spanning 14:00-22:15)
+  const groupedByDateAndBlockStr = new Map();
+  for (const item of rawMatchingEvents) {
+    const groupKey = `${item.shiftDate}::${item.parsedSummary.rawBlockStr}`;
+    if (!groupedByDateAndBlockStr.has(groupKey)) {
+      groupedByDateAndBlockStr.set(groupKey, []);
+    }
+    groupedByDateAndBlockStr.get(groupKey).push(item);
+  }
+
+  const scheduledShifts = [];
+
+  for (const [, groupItems] of groupedByDateAndBlockStr.entries()) {
+    const { blocks, hub } = groupItems[0].parsedSummary;
+
+    if (groupItems.length === blocks.length && blocks.length > 1) {
+      // Picnic already created 1 VEVENT per block while keeping the combined summary (e.g. 2 events for S1-S2)
+      groupItems.forEach((item, idx) => {
+        const blockId = blocks[idx];
+        const rawUid = item.ev.uid || `${item.shiftDate}-${blockId}`;
+        const startTime =
+          formatAmsterdamTime(item.startDate) ||
+          BLOCK_DEFAULT_TIMES[blockId]?.startTime ||
+          '14:00';
+        const endTime =
+          (item.endDate && !isNaN(item.endDate.getTime())
+            ? formatAmsterdamTime(item.endDate)
+            : null) ||
+          BLOCK_DEFAULT_TIMES[blockId]?.endTime ||
+          '16:45';
+
+        scheduledShifts.push({
+          shiftDate: item.shiftDate,
+          shiftBlock: blockId,
+          startTime,
+          endTime,
+          locationHub: hub,
+          rawIcalUid: `${rawUid}#${blockId}`,
+          summary: item.summary
+        });
+      });
+    } else {
+      // Either a single combined VEVENT (e.g. 1 event for S1-S2-S3) or a single block VEVENT (e.g. S1)
+      for (const item of groupItems) {
+        const { startDate, endDate, shiftDate, summary } = item;
+        const rawUid = item.ev.uid || `${shiftDate}-${blocks.join('-')}`;
+        const totalDurationMs =
+          endDate && !isNaN(endDate.getTime()) && endDate > startDate
+            ? endDate.getTime() - startDate.getTime()
+            : 0;
+
+        blocks.forEach((blockId, idx) => {
+          let startTime = BLOCK_DEFAULT_TIMES[blockId]?.startTime || '14:00';
+          let endTime = BLOCK_DEFAULT_TIMES[blockId]?.endTime || '16:45';
+
+          if (totalDurationMs > 0) {
+            if (blocks.length === 1) {
+              startTime = formatAmsterdamTime(startDate) || startTime;
+              endTime = formatAmsterdamTime(endDate) || endTime;
+            } else {
+              const sliceMs = totalDurationMs / blocks.length;
+              const subStart = new Date(startDate.getTime() + sliceMs * idx);
+              const subEnd = new Date(startDate.getTime() + sliceMs * (idx + 1));
+              startTime = formatAmsterdamTime(subStart) || startTime;
+              endTime = formatAmsterdamTime(subEnd) || endTime;
+            }
+          }
+
+          scheduledShifts.push({
+            shiftDate,
+            shiftBlock: blockId,
+            startTime,
+            endTime,
+            locationHub: hub,
+            rawIcalUid: `${rawUid}#${blockId}`,
+            summary
+          });
+        });
+      }
+    }
   }
 
   // Sort chronologically by date and block order

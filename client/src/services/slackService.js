@@ -1,6 +1,6 @@
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { isCriticalListeningWindow, extractFirstName, APP_VERSION, isVersionOutdated } from '../utils/constants';
-import { getShiftForBlock, saveShiftBlock } from '../utils/shiftHelpers';
+import { getShiftForBlock, saveShiftBlock, parseIcalTextToShifts } from '../utils/shiftHelpers';
 import { appStorage } from '../utils/storage';
 import { getHubByCode } from '../components/HubSelectorModal';
 
@@ -39,6 +39,7 @@ export const DEFAULT_SETTINGS = {
   avatarUrl: null,
   botSenderName: 'Day-Planning-Sender',
   autoReact: true,
+  autoPicnicReact: true,
   notify1mBefore: true,
   notifyCompletion: true,
   pollIntervalMs: 1000,
@@ -433,6 +434,32 @@ class SlackService {
     }
   }
 
+  async _fetchRawIcalText(icalUrl) {
+    if (!icalUrl || typeof icalUrl !== 'string' || !icalUrl.trim()) return null;
+    const normalizedUrl = icalUrl.trim().replace(/^webcal:\/\//i, 'https://');
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const res = await CapacitorHttp.get({
+          url: normalizedUrl,
+          headers: {
+            Accept: 'text/calendar, text/plain, */*'
+          },
+          connectTimeout: 8000,
+          readTimeout: 8000
+        });
+        const text = typeof res.data === 'string' ? res.data : null;
+        if (text && text.includes('BEGIN:VCALENDAR')) return text;
+      } else {
+        const res = await fetch(normalizedUrl);
+        if (res.ok) {
+          const text = await res.text();
+          if (text && text.includes('BEGIN:VCALENDAR')) return text;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   async completeOnboarding(payload = {}) {
     const currentSettings = this.getSettings();
     const serverUrl = this.getActiveServerUrl(currentSettings);
@@ -442,6 +469,17 @@ class SlackService {
       ...payload,
       onboardingCompleted: true
     });
+
+    let rawIcal = payload.rawIcal || null;
+    if (!rawIcal && payload.icalUrl) {
+      rawIcal = await this._fetchRawIcalText(payload.icalUrl);
+      if (rawIcal) {
+        const localParsed = parseIcalTextToShifts(rawIcal, this.getShifts(), mergedLocal.hubCode || 'HLM');
+        if (localParsed?.shifts) {
+          this.saveShiftsLocalOnly(localParsed.shifts);
+        }
+      }
+    }
 
     try {
       const data = await this._httpJson(`${serverUrl}/api/onboarding/complete`, {
@@ -454,6 +492,7 @@ class SlackService {
         body: {
           ...mergedLocal,
           ...payload,
+          rawIcal,
           userId: this.getUserId()
         },
         timeout: 12000
@@ -463,14 +502,27 @@ class SlackService {
         if (data.user) {
           appStorage.setItem('vrijcheck_settings', JSON.stringify({ ...mergedLocal, ...data.user }));
         }
-        if (data.shifts) {
+        if (data.shifts && Object.keys(data.shifts).length > 0) {
           appStorage.setItem('vrijcheck_shifts', JSON.stringify(data.shifts));
         }
+        return data;
       }
-      return data;
-    } catch (err) {
-      return { ok: false, error: err.message };
+    } catch (_) {}
+
+    if (rawIcal) {
+      const localParsed = parseIcalTextToShifts(rawIcal, this.getShifts(), mergedLocal.hubCode || 'HLM');
+      if (localParsed?.shifts) {
+        this.saveShifts(localParsed.shifts);
+        return {
+          ok: true,
+          user: mergedLocal,
+          shifts: localParsed.shifts,
+          syncedShiftsCount: localParsed.syncedCount
+        };
+      }
     }
+
+    return { ok: true, user: mergedLocal, shifts: this.getShifts() };
   }
 
   async syncIcalOnServer(icalUrl = null, rawIcal = null) {
@@ -483,6 +535,11 @@ class SlackService {
       this.saveSettings({ icalUrl: targetUrl });
     }
 
+    let resolvedRawIcal = rawIcal;
+    if (!resolvedRawIcal && targetUrl) {
+      resolvedRawIcal = await this._fetchRawIcalText(targetUrl);
+    }
+
     try {
       const data = await this._httpJson(`${serverUrl}/api/ical/sync`, {
         method: 'POST',
@@ -493,19 +550,31 @@ class SlackService {
         },
         body: {
           icalUrl: targetUrl,
-          rawIcal,
+          rawIcal: resolvedRawIcal,
           hubCode: currentSettings.hubCode || 'HLM'
         },
         timeout: 12000
       });
 
-      if (data?.ok && data.shifts) {
+      if (data?.ok && data.shifts && Object.keys(data.shifts).length > 0) {
         appStorage.setItem('vrijcheck_shifts', JSON.stringify(data.shifts));
+        return data;
       }
-      return data;
-    } catch (err) {
-      return { ok: false, error: err.message };
+    } catch (_) {}
+
+    if (resolvedRawIcal) {
+      const localParsed = parseIcalTextToShifts(resolvedRawIcal, this.getShifts(), currentSettings.hubCode || 'HLM');
+      if (localParsed?.shifts) {
+        this.saveShifts(localParsed.shifts);
+        return {
+          ok: true,
+          shifts: localParsed.shifts,
+          syncedCount: localParsed.syncedCount
+        };
+      }
     }
+
+    return { ok: false, error: 'Kon Teamwork iCal-rooster niet ophalen of parsen.' };
   }
 
   async fetchVrijcheckRequests() {

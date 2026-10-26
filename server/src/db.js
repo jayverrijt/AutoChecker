@@ -34,6 +34,7 @@ export const DEFAULT_SETTINGS = {
   onboardingCompleted: false,
   botSenderName: 'Day-Planning-Sender',
   autoReact: true,
+  autoPicnicReact: true,
   notify1mBefore: true,
   notifyCompletion: true,
   pollIntervalMs: 1000,
@@ -221,6 +222,10 @@ class MySQLDatabase {
       slackCookie,
       emojiMapping,
       autoReact: data.auto_react !== undefined ? Boolean(data.auto_react) : (data.autoReact ?? existing.autoReact ?? true),
+      autoPicnicReact:
+        data.auto_picnic_react !== undefined
+          ? Boolean(data.auto_picnic_react)
+          : (data.autoPicnicReact ?? existing.autoPicnicReact ?? true),
       notify1mBefore:
         data.notify_1m_before !== undefined
           ? Boolean(data.notify_1m_before)
@@ -332,6 +337,7 @@ class MySQLDatabase {
         slack_xoxd_cookie TEXT,
         emoji_mapping JSON,
         auto_react TINYINT(1) NOT NULL DEFAULT 1,
+        auto_picnic_react TINYINT(1) NOT NULL DEFAULT 1,
         notify_1m_before TINYINT(1) NOT NULL DEFAULT 1,
         notify_completion TINYINT(1) NOT NULL DEFAULT 1,
         sound_enabled TINYINT(1) NOT NULL DEFAULT 1,
@@ -340,6 +346,12 @@ class MySQLDatabase {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+
+    try {
+      await this.pool.execute(
+        'ALTER TABLE users ADD COLUMN auto_picnic_react TINYINT(1) NOT NULL DEFAULT 1 AFTER auto_react'
+      );
+    } catch (_) {}
 
     await this.pool.execute(`
       CREATE TABLE IF NOT EXISTS scheduled_shifts (
@@ -417,6 +429,7 @@ class MySQLDatabase {
           slack_xoxd_cookie: row.slack_xoxd_cookie,
           emoji_mapping: emojiMapping,
           auto_react: Boolean(row.auto_react),
+          auto_picnic_react: row.auto_picnic_react !== undefined ? Boolean(row.auto_picnic_react) : true,
           notify_1m_before: Boolean(row.notify_1m_before),
           notify_completion: Boolean(row.notify_completion),
           sound_enabled: Boolean(row.sound_enabled),
@@ -491,8 +504,8 @@ class MySQLDatabase {
         `INSERT INTO users (
           slack_user_id, first_name, display_name, personal_email, avatar_url,
           hub_code, channel_id, ical_url, slack_xoxc_token, slack_xoxd_cookie,
-          emoji_mapping, auto_react, notify_1m_before, notify_completion, sound_enabled, onboarding_completed
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          emoji_mapping, auto_react, auto_picnic_react, notify_1m_before, notify_completion, sound_enabled, onboarding_completed
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           first_name = VALUES(first_name),
           display_name = VALUES(display_name),
@@ -505,6 +518,7 @@ class MySQLDatabase {
           slack_xoxd_cookie = VALUES(slack_xoxd_cookie),
           emoji_mapping = VALUES(emoji_mapping),
           auto_react = VALUES(auto_react),
+          auto_picnic_react = VALUES(auto_picnic_react),
           notify_1m_before = VALUES(notify_1m_before),
           notify_completion = VALUES(notify_completion),
           sound_enabled = VALUES(sound_enabled),
@@ -522,6 +536,7 @@ class MySQLDatabase {
           record.slackCookie || '',
           JSON.stringify(record.emojiMapping || DEFAULT_EMOJI_MAPPING),
           record.autoReact ? 1 : 0,
+          record.autoPicnicReact !== false ? 1 : 0,
           record.notify1mBefore !== false ? 1 : 0,
           record.notifyCompletion !== false ? 1 : 0,
           record.soundEnabled !== false ? 1 : 0,

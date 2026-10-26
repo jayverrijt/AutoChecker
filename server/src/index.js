@@ -352,6 +352,17 @@ app.post('/api/vrijcheck-requests', async (req, res) => {
 // 4. Shifts (Per Runner)
 app.get('/api/shifts', async (req, res) => {
   await db.pullFromMySQL();
+  const user = db.getSettings(req.userId);
+  const existingScheduled = db.getScheduledShiftsList(req.userId);
+
+  if (existingScheduled.length === 0 && user?.icalUrl && user.icalUrl.trim().length > 0) {
+    try {
+      const fetched = await fetchAndParseIcal(user.icalUrl.trim(), user.hubCode || 'HLM');
+      await db.syncScheduledShifts(req.userId, fetched.shifts);
+      await db.waitForFlush();
+    } catch (_) {}
+  }
+
   res.json(db.getShifts(req.userId));
 });
 
@@ -404,6 +415,15 @@ app.post('/api/settings', async (req, res) => {
 
   const updated = db.saveSettings(req.userId, req.body);
   await db.waitForFlush();
+
+  if (req.body?.icalUrl && req.body.icalUrl.trim().length > 0) {
+    try {
+      const fetched = await fetchAndParseIcal(req.body.icalUrl.trim(), updated.hubCode || 'HLM');
+      const updatedShifts = await db.syncScheduledShifts(req.userId, fetched.shifts);
+      await db.waitForFlush();
+      io.to(`user:${req.userId}`).emit('shifts:updated', updatedShifts);
+    } catch (_) {}
+  }
 
   io.to(`user:${req.userId}`).emit('settings:updated', updated);
 

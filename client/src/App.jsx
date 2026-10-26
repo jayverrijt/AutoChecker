@@ -419,6 +419,28 @@ export function App() {
         }
       });
 
+      // Automatic :picnic: reaction on scheduled working shifts (Post-reaction notification only, no 1m advance alert)
+      s.on('bot:picnic_completed', (event) => {
+        if (event?.reactionSuccess) {
+          sounds.playSuccess();
+          setToast({
+            type: 'success',
+            title: event.title || 'Reactie :picnic: geplaatst!',
+            message:
+              event.message ||
+              'Automatisch met :picnic: gereageerd op je ingeroosterde shift(s) in Slack.',
+            emoji: 'picnic'
+          });
+          setTimeout(() => setToast(null), 6000);
+
+          if (currentSettings?.notifyCompletion !== false) {
+            notificationService.notifyPicnicCompleted({
+              blocks: event.blocks || []
+            });
+          }
+        }
+      });
+
       setSocket(s);
 
       const authHeaders = {
@@ -429,13 +451,25 @@ export function App() {
       // Bugfix #1: Fetch Single Source of Truth directly from MySQL server without overwriting with stale local state!
       fetch(`${serverUrl}/api/shifts`, { headers: authHeaders })
         .then((r) => r.json())
-        .then((data) => {
-          if (data && typeof data === 'object' && !data.error) {
+        .then(async (data) => {
+          if (data && typeof data === 'object' && !data.error && Object.keys(data).length > 0) {
             setShifts(data);
             slackService.saveShiftsLocalOnly(data);
+          } else if (currentSettings?.icalUrl) {
+            const syncRes = await slackService.syncIcalOnServer(currentSettings.icalUrl);
+            if (syncRes?.ok && syncRes.shifts) {
+              setShifts(syncRes.shifts);
+            }
           }
         })
-        .catch(() => {});
+        .catch(async () => {
+          if (currentSettings?.icalUrl && Object.keys(slackService.getShifts() || {}).length === 0) {
+            const syncRes = await slackService.syncIcalOnServer(currentSettings.icalUrl);
+            if (syncRes?.ok && syncRes.shifts) {
+              setShifts(syncRes.shifts);
+            }
+          }
+        });
 
       fetch(`${serverUrl}/api/vrijcheck-requests`, { headers: authHeaders })
         .then((r) => r.json())
@@ -449,10 +483,16 @@ export function App() {
 
       fetch(`${serverUrl}/api/settings`, { headers: authHeaders })
         .then((r) => r.json())
-        .then((data) => {
+        .then(async (data) => {
           if (data && !data.error) {
             setSettings((prev) => ({ ...(prev || {}), ...data }));
             if (data.soundEnabled !== undefined) sounds.enabled = data.soundEnabled;
+            if (data.icalUrl && Object.keys(slackService.getShifts() || {}).length === 0) {
+              const syncRes = await slackService.syncIcalOnServer(data.icalUrl);
+              if (syncRes?.ok && syncRes.shifts) {
+                setShifts(syncRes.shifts);
+              }
+            }
           }
         })
         .catch(() => {});
@@ -899,6 +939,8 @@ export function App() {
                 selectedDate={selectedDate}
                 onSelectDate={setSelectedDate}
                 shifts={shifts}
+                settings={settings}
+                onSyncIcal={handleSyncIcal}
                 onOpenShiftModal={handleOpenShiftModal}
                 onToggleVrijcheck={handleQuickToggleVrijcheck}
                 onPrevWeek={handlePrevWeek}
@@ -917,6 +959,7 @@ export function App() {
               botStatus={botStatus}
               vpsStatus={vpsStatus}
               settings={settings}
+              onSaveSettings={handleSaveSettings}
               isServerConnected={isVpsOnline}
               onSelectHub={handleSelectHub}
               onTestRealReaction={handleTestRealReaction}

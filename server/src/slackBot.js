@@ -431,7 +431,18 @@ export class SlackBotManager {
 
     this.log('info', `📢 1 minuut voor ${target}: Luisteren gestart voor ${period}-shifts!`);
     if (this.io) {
-      this.io.emit('bot:listening_started', event);
+      // Only send the 1-minute advance listening notification to runners who have a STANDBY vrijcheck request
+      // (Never send advance listening notification for non-time-sensitive :picnic: working shift reactions)
+      const allUsers = db.getAllUsers();
+      for (const u of allUsers) {
+        const uId = u.userId || u.slack_user_id;
+        if (!uId || u.notify1mBefore === false) continue;
+        const userReqs = db.getVrijcheckRequests(uId);
+        const hasStandby = userReqs.some((r) => r.status === 'STANDBY');
+        if (hasStandby) {
+          this.io.to(`user:${uId}`).emit('bot:listening_started', event);
+        }
+      }
     }
   }
 
@@ -587,6 +598,34 @@ export class SlackBotManager {
     return matchedBlocks;
   }
 
+  resolveWorkingShiftBlocks(userId, targetDateIso, period) {
+    const userShifts = db.getShifts(userId);
+    const dayData = userShifts[targetDateIso];
+    if (!dayData) return [];
+
+    const candidateBlockIds =
+      period === 'OCHTEND'
+        ? ['M1', 'M2', 'M3', 'M4']
+        : period === 'MIDDAG'
+        ? ['S1', 'S2', 'S3', 'S4']
+        : ['M1', 'M2', 'M3', 'M4', 'S1', 'S2', 'S3', 'S4'];
+
+    const workingBlocks = [];
+    for (const bId of candidateBlockIds) {
+      const blockObj = dayData[bId];
+      if (
+        blockObj &&
+        typeof blockObj === 'object' &&
+        blockObj.isScheduled !== false &&
+        !blockObj.vrijcheckActive
+      ) {
+        workingBlocks.push({ blockId: bId, details: blockObj });
+      }
+    }
+
+    return workingBlocks;
+  }
+
   hasAnyShiftForPeriod(userId, targetDateIso, period) {
     const userShifts = db.getShifts(userId);
     const dayData = userShifts[targetDateIso];
@@ -636,19 +675,84 @@ export class SlackBotManager {
         }
 
         const activeBlocks = this.resolveTargetShiftBlocks(uId, targetDateIso, parsed.period);
+        const workingBlocks = this.resolveWorkingShiftBlocks(uId, targetDateIso, parsed.period);
+        const workingBlockIds = workingBlocks.map((w) => w.blockId);
+
+        const triggerPicnicReactionIfNeeded = async () => {
+          if (workingBlocks.length === 0 || user.autoPicnicReact === false) {
+            return { picnicReacted: false, picnicLatencyMs: null };
+          }
+          const picnicStart = performance.now();
+          let picnicSuccess = false;
+
+          if (isSimulation) {
+            await new Promise((r) => setTimeout(r, Math.floor(Math.random() * 25) + 30));
+            picnicSuccess = true;
+            this.log(
+              'success',
+              `[SIMULATIE] Automatische :picnic: reactie geplaatst voor ${uName} (werkshift: ${workingBlockIds.join(', ')})!`
+            );
+          } else {
+            try {
+              const res = await this.callSlackApi(
+                'reactions.add',
+                {
+                  channel: this.resolvedChannelId || user.channelId || 'CAM2MJTA9',
+                  timestamp: msg.ts,
+                  name: 'picnic'
+                },
+                'POST',
+                user
+              );
+              if (res.ok || res.error === 'already_reacted') {
+                picnicSuccess = true;
+                this.log(
+                  'success',
+                  `🧺 Automatische :picnic: reactie geplaatst voor ${uName} (werkshift: ${workingBlockIds.join(', ')})!`
+                );
+              }
+            } catch (_) {}
+          }
+
+          const picnicLatencyMs = Math.round(performance.now() - picnicStart);
+
+          if (this.io && picnicSuccess) {
+            const picnicNotification = {
+              type: 'picnic_completed',
+              userId: uId,
+              username: uName,
+              blocks: workingBlockIds,
+              emoji: 'picnic',
+              period: parsed.period,
+              date: targetDateIso,
+              reactionSuccess: true,
+              latencyMs: picnicLatencyMs,
+              title: 'Reactie :picnic: geplaatst!',
+              message: `Automatisch met :picnic: gereageerd op je ingeroosterde shift (${workingBlockIds.join(', ')}) in Slack.`,
+              timestamp: new Date().toISOString()
+            };
+            this.io.to(`user:${uId}`).emit('bot:picnic_completed', picnicNotification);
+          }
+
+          return { picnicReacted: picnicSuccess, picnicLatencyMs };
+        };
 
         // Case 1: Runner did NOT request vrijcheck for any block in this period.
         // Bugfix #1 & #4: Do NOT insert any failed record into vrijcheck_requests or history!
         if (activeBlocks.length === 0) {
+          const { picnicReacted } = await triggerPicnicReactionIfNeeded();
           const hasAnyShift = this.hasAnyShiftForPeriod(uId, targetDateIso, parsed.period);
           const reason = hasAnyShift
-            ? `Vrijcheck staat UIT voor de shifts op ${targetDateIso} (${parsed.period}). Geen reactie verzonden.`
+            ? `Vrijcheck staat UIT voor de shifts op ${targetDateIso} (${parsed.period}). Geen vrijcheck-reactie verzonden.`
             : `Geen actieve shift in jouw rooster voor ${parsed.period} op ${targetDateIso}.`;
 
           runnersProcessed.push({
             user: uName,
             userId: uId,
             matched: false,
+            picnicReacted,
+            picnicBlocks: workingBlockIds,
+            picnicEmoji: picnicReacted ? 'picnic' : null,
             status: hasAnyShift ? 'vrijcheck_disabled' : 'no_shift',
             reason
           });
@@ -656,6 +760,7 @@ export class SlackBotManager {
         }
 
         // Case 2: Runner HAS requested vrijcheck (STANDBY) for 1 or more shift blocks!
+        // Execute sub-second vrijcheck reactions FIRST with highest priority!
         for (const { blockId } of activeBlocks) {
           const emojiName = this.getEmojiForShiftBlock(user, blockId);
           if (!emojiName) continue;
@@ -760,8 +865,16 @@ export class SlackBotManager {
             emojiName,
             reactionSuccess,
             latencyMs,
+            picnicReacted: false,
+            picnicBlocks: workingBlockIds,
+            picnicEmoji: null,
             status: reactionSuccess ? 'success' : 'failed'
           });
+        }
+
+        // Fire non-time-sensitive :picnic: reaction in background after vrijcheck is already placed!
+        if (workingBlocks.length > 0 && user.autoPicnicReact !== false) {
+          triggerPicnicReactionIfNeeded().catch(() => {});
         }
       })
     );

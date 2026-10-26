@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { format, isSameDay } from 'date-fns';
-import { Check, AlertCircle } from 'lucide-react';
+import { Check, AlertCircle, Calendar, RefreshCw } from 'lucide-react';
 import { formatDay2Letters, getScheduledDayBlocks } from '../utils/shiftHelpers';
 
 export const ScheduleView = ({
@@ -8,6 +8,8 @@ export const ScheduleView = ({
   selectedDate,
   onSelectDate,
   shifts,
+  settings,
+  onSyncIcal,
   onToggleVrijcheck,
   onPrevWeek,
   onNextWeek
@@ -15,6 +17,38 @@ export const ScheduleView = ({
   const touchStartXRef = useRef(null);
   const touchStartYRef = useRef(null);
   const [swipeAnimation, setSwipeAnimation] = useState('');
+  const [quickIcalUrl, setQuickIcalUrl] = useState(settings?.icalUrl || '');
+  const [isQuickSyncing, setIsQuickSyncing] = useState(false);
+  const [quickSyncError, setQuickSyncError] = useState(null);
+
+  useEffect(() => {
+    if (settings?.icalUrl && !quickIcalUrl) {
+      setQuickIcalUrl(settings.icalUrl);
+    }
+  }, [settings?.icalUrl]);
+
+  const hasAnyLoadedShifts = Object.keys(shifts || {}).length > 0;
+
+  const handleQuickIcalSubmit = async (e) => {
+    if (e) e.preventDefault();
+    const targetUrl = (quickIcalUrl || settings?.icalUrl || '').trim();
+    if (!targetUrl) {
+      setQuickSyncError('Plak eerst je Teamwork iCal-link (.ics).');
+      return;
+    }
+    setIsQuickSyncing(true);
+    setQuickSyncError(null);
+    try {
+      const res = await onSyncIcal?.(targetUrl);
+      if (!res?.ok) {
+        setQuickSyncError(res?.error || 'Kon iCal-link niet synchroniseren.');
+      }
+    } catch (err) {
+      setQuickSyncError(err.message);
+    } finally {
+      setIsQuickSyncing(false);
+    }
+  };
 
   useEffect(() => {
     setSwipeAnimation('animate-fadeIn');
@@ -65,6 +99,41 @@ export const ScheduleView = ({
       onTouchEnd={handleTouchEnd}
       className={`px-3 sm:px-4 py-2 pb-28 overflow-y-auto select-none scroll-smooth transition-all ${swipeAnimation}`}
     >
+      {!hasAnyLoadedShifts && (
+        <form
+          onSubmit={handleQuickIcalSubmit}
+          className="mb-3 p-3.5 rounded-2xl bg-[#161822] border border-blue-500/35 space-y-2.5"
+        >
+          <div className="flex items-center gap-2 text-xs font-bold text-blue-400">
+            <Calendar className="w-4 h-4 shrink-0" />
+            <span>Koppel of Synchroniseer je Teamwork Agenda (.ics)</span>
+          </div>
+          <p className="text-[11px] text-neutral-300 leading-relaxed">
+            Plak hier je persoonlijke Teamwork iCal-link om al je ingeroosterde shifts (inclusief gecombineerde shifts zoals S1-S2-S3) direct in te laden:
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="url"
+              value={quickIcalUrl}
+              onChange={(e) => setQuickIcalUrl(e.target.value)}
+              placeholder="https://people-planning-proxy-prod.nl.picnic..."
+              className="flex-1 bg-[#101118] border border-[#2b2e3d] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
+            />
+            <button
+              type="submit"
+              disabled={isQuickSyncing}
+              className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isQuickSyncing ? 'animate-spin' : ''}`} />
+              <span>{isQuickSyncing ? 'Laden...' : 'Inladen'}</span>
+            </button>
+          </div>
+          {quickSyncError && (
+            <div className="text-[11px] text-red-400 font-medium">{quickSyncError}</div>
+          )}
+        </form>
+      )}
+
       <div className="divide-y divide-[#232532]">
         {days.map((dayDate) => {
           const dateKey = format(dayDate, 'yyyy-MM-dd');

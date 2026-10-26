@@ -75,9 +75,16 @@ jobs:
             fi
             cd "$TARGET_DIR"
             git fetch origin main
+            git checkout -B main origin/main
             git reset --hard origin/main
+
+            if [ -f "/home/jayv/AutoChecker/server/data/users.json" ] && [ ! -f "$TARGET_DIR/server/data/users.json" ]; then
+              mkdir -p "$TARGET_DIR/server/data"
+              cp "/home/jayv/AutoChecker/server/data/users.json" "$TARGET_DIR/server/data/users.json" || true
+            fi
             
             if command -v docker >/dev/null 2>&1; then
+              docker rm -f vrijcheck-24-7 >/dev/null 2>&1 || true
               docker compose up -d --build
               echo "✅ Docker Compose stack (vrijcheck-db, vrijcheck-phpmyadmin, vrijcheck-24-7) rebuilt and restarted!"
             elif command -v pm2 >/dev/null 2>&1; then

@@ -132,6 +132,19 @@ class NotificationService {
     }
   }
 
+  /**
+   * Directly after automatic :picnic: reaction on working shifts:
+   * (No advance listening notification needed since :picnic: is not time-sensitive, only post-reaction notification)
+   */
+  async notifyPicnicCompleted({ blocks = [] } = {}) {
+    const shiftStr = Array.isArray(blocks) && blocks.length > 0 ? ` (${blocks.join(', ')})` : '';
+    return this.showNotification({
+      title: '🧺 Automatisch met :picnic: gereageerd!',
+      body: `De bot heeft automatisch met :picnic: gereageerd op je ingeroosterde shift${shiftStr} in Slack.`,
+      id: 20204
+    });
+  }
+
   async scheduleAdvanceShiftAlerts(shifts = {}, channel = '#nl-dist-runners-hlm') {
     if (!Capacitor.isNativePlatform()) return;
     await this.init();

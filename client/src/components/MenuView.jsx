@@ -22,6 +22,7 @@ export const MenuView = ({
   botStatus,
   vpsStatus,
   settings,
+  onSaveSettings,
   isServerConnected = false,
   onSelectHub,
   onTestRealReaction
@@ -73,6 +74,15 @@ export const MenuView = ({
       .toUpperCase() || 'RN';
 
   const isVpsOnline = isServerConnected || Boolean(vpsStatus?.isConnected);
+  const isAutoPicnicOn = settings?.autoPicnicReact !== false;
+
+  const handleToggleAutoPicnic = () => {
+    const nextVal = !isAutoPicnicOn;
+    onSaveSettings?.({
+      ...(settings || slackService.getSettings()),
+      autoPicnicReact: nextVal
+    });
+  };
 
   const handleConfirmLogout = () => {
     setShowLogoutConfirm(false);
@@ -218,6 +228,52 @@ export const MenuView = ({
         </div>
       </button>
 
+      {/* 2B. AUTOMATISCH REAGEREN MET :picnic: OP SHIFTS DIE JE MOET WERKEN (Standaard AAN) */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={handleToggleAutoPicnic}
+        className={`w-full rounded-2xl p-4 flex items-center justify-between text-left transition-all cursor-pointer active:scale-[0.99] shadow-sm border ${
+          isAutoPicnicOn
+            ? 'bg-[#181922] border-red-500/35 hover:bg-[#20222f]'
+            : 'bg-[#181922] border-[#272938] hover:bg-[#20222f]'
+        }`}
+      >
+        <div className="flex items-center gap-3.5 min-w-0 pr-3">
+          <div className="w-9 h-9 rounded-xl bg-red-500/15 border border-red-500/30 flex items-center justify-center shrink-0">
+            <SlackEmoji name="picnic" size="md" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-white tracking-tight flex items-center gap-1.5 flex-wrap">
+              <span>Automatisch reageren met</span>
+              <SlackEmoji name="picnic" size="sm" />
+              <span>op shifts die je moet werken</span>
+            </div>
+            <p className="text-[11px] text-neutral-400 mt-0.5 leading-relaxed">
+              Reageert automatisch op Day-Planning-Sender wanneer je ingeroosterd staat om te werken (en stuurt daarna een bevestiging).
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          aria-label="Automatisch reageren met :picnic: op shifts die je moet werken"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleToggleAutoPicnic();
+          }}
+          className={`w-12 h-6.5 rounded-full transition-colors relative shrink-0 ${
+            isAutoPicnicOn ? 'bg-emerald-500' : 'bg-neutral-700'
+          }`}
+        >
+          <span
+            className={`block w-5 h-5 rounded-full bg-white shadow transition-transform transform ${
+              isAutoPicnicOn ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </button>
+      </div>
+
       {/* 3. BOT TEST-REACTIE / SIMULATOR (Gesplitst uit oude monitor) */}
       <div className="bg-[#181922] border border-[#272938] rounded-2xl p-4 space-y-3.5 shadow-sm">
         <div className="flex items-center justify-between">
@@ -239,8 +295,8 @@ export const MenuView = ({
         {/* Emoji Picker for Test Reaction */}
         <div className="flex items-center justify-between bg-[#12131a] border border-[#232534] rounded-xl p-2">
           <span className="text-xs text-neutral-300 font-medium pl-1">Test Emoji:</span>
-          <div className="flex items-center gap-1.5">
-            {['1-red', '2-red', '3-red', '4-red'].map((em) => (
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            {['1-red', '2-red', '3-red', '4-red', 'picnic'].map((em) => (
               <button
                 key={em}
                 type="button"
